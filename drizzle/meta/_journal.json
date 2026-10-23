@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1779415773122,
+      "tag": "0000_material_husk",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1779415938802,
+      "tag": "0001_large_metal_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1779415979122,
+      "tag": "0002_true_piledriver",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1780666986721,
+      "tag": "0003_goofy_the_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1783805162539,
+      "tag": "0004_many_scalphunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1783805470862,
+      "tag": "0005_soft_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1783808564668,
+      "tag": "0006_shiny_mongu",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1786062258051,
+      "tag": "0007_blue_jamie_braddock",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1786068639370,
+      "tag": "0008_amusing_phantom_reporter",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1786111910317,
+      "tag": "0009_sad_nemesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1786115567714,
+      "tag": "0010_fluffy_gideon",
+      "breakpoints": true
+    }
+  ]
+}

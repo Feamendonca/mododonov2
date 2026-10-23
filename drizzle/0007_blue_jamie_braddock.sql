@@ -1,0 +1,1 @@
+ALTER TABLE `action_plans` ADD `medida_id` int;
