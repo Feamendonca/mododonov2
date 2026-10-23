@@ -1,26 +1,31 @@
 import {
+  bigint,
   boolean,
-  decimal,
-  int,
-  json,
-  mysqlEnum,
-  mysqlTable,
+  date,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
-} from "drizzle-orm/mysql-core";
-import { bigint, date, tinyint, uniqueIndex } from "drizzle-orm/mysql-core";
+} from "drizzle-orm/pg-core";
 
 // ─── Users ───────────────────────────────────────────────────────────────────
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+export const usersRoleEnum = pgEnum("users_role", ["user", "admin", "supervisor", "gerente"]);
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "supervisor", "gerente"]).default("user").notNull(),
+  role: usersRoleEnum("role").default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
@@ -28,24 +33,32 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 // ─── Stores (Lojas) ──────────────────────────────────────────────────────────
-export const stores = mysqlTable("stores", {
-  id: int("id").autoincrement().primaryKey(),
+export const storesOperationTypeEnum = pgEnum("stores_operation_type", [
+  "aeroporto",
+  "mall",
+  "rua",
+  "corporativo",
+  "universitario",
+]);
+
+export const stores = pgTable("stores", {
+  id: serial("id").primaryKey(),
   slug: varchar("slug", { length: 64 }).notNull().unique(),
   name: varchar("name", { length: 128 }).notNull(),
   location: varchar("location", { length: 128 }),
   managerName: varchar("managerName", { length: 128 }),
   // Orçamento mensal
-  budgetRevenue: decimal("budgetRevenue", { precision: 12, scale: 2 }).default("0"),
-  budgetCmvPct: decimal("budgetCmvPct", { precision: 5, scale: 2 }).default("30"),
-  budgetPackagingPct: decimal("budgetPackagingPct", { precision: 5, scale: 2 }).default("4"),
-  budgetTaxesPct: decimal("budgetTaxesPct", { precision: 5, scale: 2 }).default("3"),
-  budgetFixedCosts: decimal("budgetFixedCosts", { precision: 12, scale: 2 }).default("0"),
+  budgetRevenue: numeric("budgetRevenue", { precision: 12, scale: 2 }).default("0"),
+  budgetCmvPct: numeric("budgetCmvPct", { precision: 5, scale: 2 }).default("30"),
+  budgetPackagingPct: numeric("budgetPackagingPct", { precision: 5, scale: 2 }).default("4"),
+  budgetTaxesPct: numeric("budgetTaxesPct", { precision: 5, scale: 2 }).default("3"),
+  budgetFixedCosts: numeric("budgetFixedCosts", { precision: 12, scale: 2 }).default("0"),
   // Pesos por dia da semana (JSON array [dom, seg, ter, qua, qui, sex, sab])
-  dayWeights: json("dayWeights").$type<number[]>(),
+  dayWeights: jsonb("dayWeights").$type<number[]>(),
   // Qualidade
-  qualityGoogle: decimal("qualityGoogle", { precision: 5, scale: 2 }), // NULL = sem apontamento
-  qualityAudit: decimal("qualityAudit", { precision: 5, scale: 2 }), // NULL = sem apontamento
-  qualityChecklist: decimal("qualityChecklist", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityGoogle: numeric("qualityGoogle", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityAudit: numeric("qualityAudit", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityChecklist: numeric("qualityChecklist", { precision: 5, scale: 2 }), // NULL = sem apontamento
   sanitaryGate: boolean("sanitaryGate").default(true),
   /** Google Place ID da loja — quando preenchido, qualityGoogle vem automaticamente do Places API. */
   googlePlaceId: varchar("googlePlaceId", { length: 255 }),
@@ -54,10 +67,10 @@ export const stores = mysqlTable("stores", {
   gateEvaluation: boolean("gateEvaluation").default(true),
   gateSanctions: boolean("gateSanctions").default(true),
   // Tipo de operação (define comportamento base de feriados)
-  operationType: mysqlEnum("operationType", ["aeroporto", "mall", "rua", "corporativo", "universitario"]).default("rua"),
+  operationType: storesOperationTypeEnum("operationType").default("rua"),
   active: boolean("active").default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   /** CMV Teórico: quando true, a tela Estoque exibe comparativo CMV real vs teórico (migration 0018) */
   usaCmvTeorico: boolean("usaCmvTeorico").default(false),
   /** Segmento operacional (ex.: 'massas', 'hamburgueria'). NULL = não classificada. Migration 0021. */
@@ -70,38 +83,40 @@ export type Store = typeof stores.$inferSelect;
 export type InsertStore = typeof stores.$inferInsert;
 
 // ─── User ↔ Store link ───────────────────────────────────────────────────────
-export const userStores = mysqlTable("user_stores", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  storeId: int("storeId").notNull(),
+export const userStores = pgTable("user_stores", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  storeId: integer("storeId").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 // ─── Daily Entries (Lançamentos Diários) ─────────────────────────────────────
-export const dailyEntries = mysqlTable("daily_entries", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const dailyEntries = pgTable("daily_entries", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   entryDate: varchar("entryDate", { length: 10 }).notNull(), // YYYY-MM-DD
-  revenue: decimal("revenue", { precision: 12, scale: 2 }).default("0"),
-  invoices: decimal("invoices", { precision: 12, scale: 2 }).default("0"), // notas de entrada
-  extraLabor: decimal("extraLabor", { precision: 12, scale: 2 }).default("0"), // mão de obra extra
-  atendimentos: int("atendimentos").default(0), // número de atendimentos do dia
+  revenue: numeric("revenue", { precision: 12, scale: 2 }).default("0"),
+  invoices: numeric("invoices", { precision: 12, scale: 2 }).default("0"), // notas de entrada
+  extraLabor: numeric("extraLabor", { precision: 12, scale: 2 }).default("0"), // mão de obra extra
+  atendimentos: integer("atendimentos").default(0), // número de atendimentos do dia
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type DailyEntry = typeof dailyEntries.$inferSelect;
 export type InsertDailyEntry = typeof dailyEntries.$inferInsert;
 
 // ─── Stock Items (Itens de Estoque — Curva ABC) ───────────────────────────────
-export const stockItems = mysqlTable("stock_items", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const stockItemsCurveEnum = pgEnum("stock_items_curve", ["A", "B", "C"]);
+
+export const stockItems = pgTable("stock_items", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   name: varchar("name", { length: 128 }).notNull(),
   unit: varchar("unit", { length: 32 }).default("kg"),
-  curve: mysqlEnum("curve", ["A", "B", "C"]).default("B"),
-  avgCost: decimal("avgCost", { precision: 10, scale: 2 }).default("0"),
+  curve: stockItemsCurveEnum("curve").default("B"),
+  avgCost: numeric("avgCost", { precision: 10, scale: 2 }).default("0"),
   active: boolean("active").default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -109,13 +124,15 @@ export const stockItems = mysqlTable("stock_items", {
 export type StockItem = typeof stockItems.$inferSelect;
 
 // ─── Stock Counts (Contagens de Estoque) ─────────────────────────────────────
-export const stockCounts = mysqlTable("stock_counts", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const stockCountsCountTypeEnum = pgEnum("stock_counts_count_type", ["initial", "weekly", "monthly"]);
+
+export const stockCounts = pgTable("stock_counts", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   countDate: varchar("countDate", { length: 10 }).notNull(), // YYYY-MM-DD
-  totalValue: decimal("totalValue", { precision: 12, scale: 2 }).notNull(),
-  countType: mysqlEnum("countType", ["initial", "weekly", "monthly"]).default("weekly"),
-  items: json("items").$type<{ itemId: number; qty: number; cost: number }[]>(),
+  totalValue: numeric("totalValue", { precision: 12, scale: 2 }).notNull(),
+  countType: stockCountsCountTypeEnum("countType").default("weekly"),
+  items: jsonb("items").$type<{ itemId: number; qty: number; cost: number }[]>(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -124,22 +141,38 @@ export type StockCount = typeof stockCounts.$inferSelect;
 export type InsertStockCount = typeof stockCounts.$inferInsert;
 
 // ─── Action Plans (Plano de Ação) ─────────────────────────────────────────────
-export const actionPlans = mysqlTable("action_plans", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
-  category: mysqlEnum("category", ["cmv", "experience", "revenue", "people", "discipline", "other"]).notNull(),
+export const actionPlansCategoryEnum = pgEnum("action_plans_category", [
+  "cmv",
+  "experience",
+  "revenue",
+  "people",
+  "discipline",
+  "other",
+]);
+export const actionPlansStatusEnum = pgEnum("action_plans_status", [
+  "todo",
+  "doing",
+  "done",
+  "failed",
+  "cancelled",
+]);
+
+export const actionPlans = pgTable("action_plans", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  category: actionPlansCategoryEnum("category").notNull(),
   description: text("description").notNull(),
   reason: text("reason"),
   dueDate: varchar("dueDate", { length: 10 }), // YYYY-MM-DD
   responsible: varchar("responsible", { length: 128 }),
-  status: mysqlEnum("status", ["todo", "doing", "done", "failed", "cancelled"]).default("todo"),
+  status: actionPlansStatusEnum("status").default("todo"),
   result: text("result"),
   isSuggestion: boolean("isSuggestion").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   completedAt: timestamp("completedAt"),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  medidaId: int("medida_id"),  // FK lógica para medidas_direcao.id (nullable — ações avulsas ficam null)
-  semanaInicio: int("semanaInicio"),        // 1-4: semana do mês em que a ação começa (guia semanal, migration 0023)
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  medidaId: integer("medida_id"),  // FK lógica para medidas_direcao.id (nullable — ações avulsas ficam null)
+  semanaInicio: integer("semanaInicio"),        // 1-4: semana do mês em que a ação começa (guia semanal, migration 0023)
   checkpointNumerico: text("checkpointNumerico"), // número que o gerente olha para saber se está funcionando
   acaoSeEstourar: text("acaoSeEstourar"),   // o que fazer se o checkpoint estourar
 });
@@ -148,17 +181,17 @@ export type ActionPlan = typeof actionPlans.$inferSelect;
 export type InsertActionPlan = typeof actionPlans.$inferInsert;
 
 // ─── Commitments (Compromisso Digital) ───────────────────────────────────────
-export const commitments = mysqlTable("commitments", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const commitments = pgTable("commitments", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   period: varchar("period", { length: 7 }).notNull(), // YYYY-MM
   signed: boolean("signed").default(false),
   signedAt: timestamp("signedAt"),
   signedBy: varchar("signedBy", { length: 128 }),
   // Bloco 1: Experiência do cliente
-  reviewsTarget: int("reviewsTarget").default(30),
-  tableResponseHours: int("tableResponseHours").default(24),
-  googleResponseHours: int("googleResponseHours").default(48),
+  reviewsTarget: integer("reviewsTarget").default(30),
+  tableResponseHours: integer("tableResponseHours").default(24),
+  googleResponseHours: integer("googleResponseHours").default(48),
   trainTeam: boolean("trainTeam").default(false),
   actOnStandard: boolean("actOnStandard").default(false),
   joinCommunity: boolean("joinCommunity").default(false),
@@ -175,16 +208,16 @@ export const commitments = mysqlTable("commitments", {
   joinCouncil: boolean("joinCouncil").default(false),
   applyContent: boolean("applyContent").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type Commitment = typeof commitments.$inferSelect;
 export type InsertCommitment = typeof commitments.$inferInsert;
 
 // ─── Trail Completions (Trilhas Concluídas) ───────────────────────────────────
-export const trailCompletions = mysqlTable("trail_completions", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const trailCompletions = pgTable("trail_completions", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   moduleId: varchar("moduleId", { length: 64 }).notNull(),
   completedAt: timestamp("completedAt").defaultNow().notNull(),
 });
@@ -192,62 +225,75 @@ export const trailCompletions = mysqlTable("trail_completions", {
 export type TrailCompletion = typeof trailCompletions.$inferSelect;
 
 // ─── Customer Occurrences (Experiência do Cliente) ────────────────────────────
-export const customerOccurrences = mysqlTable("customer_occurrences", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const customerOccurrencesTypeEnum = pgEnum("customer_occurrences_type", [
+  "complaint",
+  "compliment",
+  "suggestion",
+  "google_review",
+]);
+
+export const customerOccurrences = pgTable("customer_occurrences", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   occurrenceDate: varchar("occurrenceDate", { length: 10 }).notNull(), // YYYY-MM-DD
-  type: mysqlEnum("type", ["complaint", "compliment", "suggestion", "google_review"]).notNull(),
-  rating: int("rating"), // 1-5 stars
+  type: customerOccurrencesTypeEnum("type").notNull(),
+  rating: integer("rating"), // 1-5 stars
   description: text("description").notNull(),
   actionTaken: text("actionTaken"),
   resolved: boolean("resolved").default(false),
   resolvedAt: timestamp("resolvedAt"),
-  linkedActionId: int("linkedActionId"),
+  linkedActionId: integer("linkedActionId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type CustomerOccurrence = typeof customerOccurrences.$inferSelect;
 export type InsertCustomerOccurrence = typeof customerOccurrences.$inferInsert;
 
 // ─── Monthly Quality (Qualidade Mensal) ───────────────────────────────────────
-export const monthlyQuality = mysqlTable("monthly_quality", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const monthlyQualityGoogleFonteEnum = pgEnum("monthly_quality_google_fonte", ["calculado", "manual"]);
+export const monthlyQualityAuditFonteEnum = pgEnum("monthly_quality_audit_fonte", ["calculado", "manual"]);
+export const monthlyQualityChecklistFonteEnum = pgEnum("monthly_quality_checklist_fonte", ["calculado", "manual"]);
+
+export const monthlyQuality = pgTable("monthly_quality", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   period: varchar("period", { length: 7 }).notNull(), // YYYY-MM
-  qualityGoogle: decimal("qualityGoogle", { precision: 5, scale: 2 }), // NULL = sem apontamento
-  qualityAudit: decimal("qualityAudit", { precision: 5, scale: 2 }), // NULL = sem apontamento
-  qualityChecklist: decimal("qualityChecklist", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityGoogle: numeric("qualityGoogle", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityAudit: numeric("qualityAudit", { precision: 5, scale: 2 }), // NULL = sem apontamento
+  qualityChecklist: numeric("qualityChecklist", { precision: 5, scale: 2 }), // NULL = sem apontamento
   sanitaryGate: boolean("sanitaryGate").default(true),
   // Proveniência (Bloco C) — quem/como cada campo foi gerado
-  googleFonte: mysqlEnum("googleFonte", ["calculado", "manual"]),  // NULL = nunca apontado
+  googleFonte: monthlyQualityGoogleFonteEnum("googleFonte"),  // NULL = nunca apontado
   googleUpdatedBy: varchar("googleUpdatedBy", { length: 128 }),    // nome ou "migração"
   googleUpdatedAt: timestamp("googleUpdatedAt"),
-  auditFonte: mysqlEnum("auditFonte", ["calculado", "manual"]),
+  auditFonte: monthlyQualityAuditFonteEnum("auditFonte"),
   auditUpdatedBy: varchar("auditUpdatedBy", { length: 128 }),
   auditUpdatedAt: timestamp("auditUpdatedAt"),
-  checklistFonte: mysqlEnum("checklistFonte", ["calculado", "manual"]),
+  checklistFonte: monthlyQualityChecklistFonteEnum("checklistFonte"),
   checklistUpdatedBy: varchar("checklistUpdatedBy", { length: 128 }),
   checklistUpdatedAt: timestamp("checklistUpdatedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type MonthlyQuality = typeof monthlyQuality.$inferSelect;
 
 // ─── Gatilhos Mensais (Elegibilidade por Pessoa/Mês) ────────────────────────────────────
-export const gatilhosMensais = mysqlTable("gatilhos_mensais", {
-  id: int("id").autoincrement().primaryKey(),
-  employeeId: int("employeeId").notNull(),
-  storeId: int("storeId").notNull(),
+export const gatilhosMensaisFonteEnum = pgEnum("gatilhos_mensais_fonte", ["calculado", "manual"]);
+
+export const gatilhosMensais = pgTable("gatilhos_mensais", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employeeId").notNull(),
+  storeId: integer("storeId").notNull(),
   period: varchar("period", { length: 7 }).notNull(), // YYYY-MM
   semFaltasInjustificadas: boolean("semFaltasInjustificadas"), // NULL = não apontado
-  avaliacaoDesempenho: decimal("avaliacaoDesempenho", { precision: 4, scale: 2 }), // NULL = não apontado
+  avaliacaoDesempenho: numeric("avaliacaoDesempenho", { precision: 4, scale: 2 }), // NULL = não apontado
   semSancoes: boolean("semSancoes"), // NULL = não apontado
   // Proveniência
-  fonte: mysqlEnum("fonte", ["calculado", "manual"]).default("manual"),
+  fonte: gatilhosMensaisFonteEnum("fonte").default("manual"),
   updatedBy: varchar("updatedBy", { length: 128 }),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -255,15 +301,22 @@ export type GatilhoMensal = typeof gatilhosMensais.$inferSelect;
 export type InsertGatilhoMensal = typeof gatilhosMensais.$inferInsert;
 
 // ─── Holiday Calendars (Calendário de Feriados) ───────────────────────────────────────
-export const holidayCalendars = mysqlTable("holiday_calendars", {
-  id: int("id").autoincrement().primaryKey(),
+export const holidayCalendarsEventTypeEnum = pgEnum("holiday_calendars_event_type", [
+  "feriado",
+  "vespera",
+  "ponto_facultativo",
+]);
+export const holidayCalendarsScopeEnum = pgEnum("holiday_calendars_scope", ["nacional", "estadual", "municipal"]);
+
+export const holidayCalendars = pgTable("holiday_calendars", {
+  id: serial("id").primaryKey(),
   // Data no formato YYYY-MM-DD
   holidayDate: varchar("holiday_date", { length: 10 }).notNull(),
   name: varchar("name", { length: 128 }).notNull(),
   // feriado = dia do feriado, vespera = véspera, ponto_facultativo = ponto facultativo
-  eventType: mysqlEnum("event_type", ["feriado", "vespera", "ponto_facultativo"]).notNull().default("feriado"),
+  eventType: holidayCalendarsEventTypeEnum("event_type").notNull().default("feriado"),
   // Abrangência: nacional, estadual, municipal
-  scope: mysqlEnum("scope", ["nacional", "estadual", "municipal"]).default("nacional"),
+  scope: holidayCalendarsScopeEnum("scope").default("nacional"),
   uf: varchar("uf", { length: 2 }),
   municipio: varchar("municipio", { length: 128 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -273,67 +326,77 @@ export type HolidayCalendar = typeof holidayCalendars.$inferSelect;
 export type InsertHolidayCalendar = typeof holidayCalendars.$inferInsert;
 
 // ─── Store Holiday Rules (Regras de Multiplicador por Loja) ──────────────────────
-export const storeHolidayRules = mysqlTable("store_holiday_rules", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("store_id").notNull(),
+export const storeHolidayRulesEventTypeEnum = pgEnum("store_holiday_rules_event_type", [
+  "feriado",
+  "vespera",
+  "ponto_facultativo",
+]);
+export const storeHolidayRulesSourceEnum = pgEnum("store_holiday_rules_source", ["ia", "manual"]);
+
+export const storeHolidayRules = pgTable("store_holiday_rules", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").notNull(),
   // Data no formato YYYY-MM-DD (pode ser feriado ou véspera)
   ruleDate: varchar("rule_date", { length: 10 }).notNull(),
-  eventType: mysqlEnum("event_type", ["feriado", "vespera", "ponto_facultativo"]).notNull().default("feriado"),
+  eventType: storeHolidayRulesEventTypeEnum("event_type").notNull().default("feriado"),
   // Multiplicador sobre a meta diária base (ex: 1.3 = 30% acima, 0.6 = 40% abaixo, 0 = fechado)
-  multiplier: decimal("multiplier", { precision: 5, scale: 3 }).notNull().default("1.000"),
+  multiplier: numeric("multiplier", { precision: 5, scale: 3 }).notNull().default("1.000"),
   // fonte: ia = sugerido pela IA, manual = ajustado manualmente pelo admin/gerente
-  source: mysqlEnum("source", ["ia", "manual"]).default("ia"),
+  source: storeHolidayRulesSourceEnum("source").default("ia"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type StoreHolidayRule = typeof storeHolidayRules.$inferSelect;
 export type InsertStoreHolidayRule = typeof storeHolidayRules.$inferInsert;
 
 // ─── Pessoas — Employees ──────────────────────────────────────────────────────
-export const employees = mysqlTable("employees", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const employeesStatusEnum = pgEnum("employees_status", ["active", "probation", "inactive"]);
+export const employeesPapelRemuneravelEnum = pgEnum("employees_papel_remuneravel", ["nenhum", "gestor", "lider"]);
+
+export const employees = pgTable("employees", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   name: varchar("name", { length: 128 }).notNull(),
   role: varchar("role", { length: 64 }).notNull(),
-  salaryBase: decimal("salaryBase", { precision: 10, scale: 2 }).notNull().default("0"),
-  transportAllowance: decimal("transportAllowance", { precision: 10, scale: 2 }).notNull().default("0"),
-  mealAllowance: decimal("mealAllowance", { precision: 10, scale: 2 }).notNull().default("0"),
-  otherBenefits: decimal("otherBenefits", { precision: 10, scale: 2 }).notNull().default("0"),
-  hoursPerMonth: int("hoursPerMonth").notNull().default(220),
+  salaryBase: numeric("salaryBase", { precision: 10, scale: 2 }).notNull().default("0"),
+  transportAllowance: numeric("transportAllowance", { precision: 10, scale: 2 }).notNull().default("0"),
+  mealAllowance: numeric("mealAllowance", { precision: 10, scale: 2 }).notNull().default("0"),
+  otherBenefits: numeric("otherBenefits", { precision: 10, scale: 2 }).notNull().default("0"),
+  hoursPerMonth: integer("hoursPerMonth").notNull().default(220),
   hireDate: date("hireDate").notNull(),
-  status: mysqlEnum("status", ["active", "probation", "inactive"]).notNull().default("active"),
-  papelRemuneravel: mysqlEnum("papelRemuneravel", ["nenhum", "gestor", "lider"]).notNull().default("nenhum"),
-  userId: int("userId"),
+  status: employeesStatusEnum("status").notNull().default("active"),
+  papelRemuneravel: employeesPapelRemuneravelEnum("papelRemuneravel").notNull().default("nenhum"),
+  userId: integer("userId"),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 });
 export type EmployeeRow = typeof employees.$inferSelect;
 export type InsertEmployee = typeof employees.$inferInsert;
 
 // ─── Pessoas — Shift Blocks ───────────────────────────────────────────────────
-export const shiftBlocks = mysqlTable("shift_blocks", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const shiftBlocks = pgTable("shift_blocks", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   name: varchar("name", { length: 64 }).notNull(),
-  startHour: int("startHour").notNull(),
-  endHour: int("endHour").notNull(),
-  sortOrder: int("sortOrder").notNull().default(0),
-  startMinute: int("startMinute").notNull().default(0),
-  endMinute: int("endMinute").notNull().default(0),
+  startHour: integer("startHour").notNull(),
+  endHour: integer("endHour").notNull(),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  startMinute: integer("startMinute").notNull().default(0),
+  endMinute: integer("endMinute").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 });
 export type ShiftBlockRow = typeof shiftBlocks.$inferSelect;
 export type InsertShiftBlock = typeof shiftBlocks.$inferInsert;
 
 // ─── Pessoas — Schedules ──────────────────────────────────────────────────────
-export const schedules = mysqlTable("schedules", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
-  shiftBlockId: int("shiftBlockId").notNull(),
-  employeeId: int("employeeId").notNull(),
+export const schedules = pgTable("schedules", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  shiftBlockId: integer("shiftBlockId").notNull(),
+  employeeId: integer("employeeId").notNull(),
   workDate: date("workDate").notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
 }, (t) => ({
@@ -343,14 +406,14 @@ export type ScheduleRow = typeof schedules.$inferSelect;
 export type InsertSchedule = typeof schedules.$inferInsert;
 
 // ─── Pessoas — Hourly Revenue ─────────────────────────────────────────────────
-export const hourlyRevenue = mysqlTable("hourly_revenue", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const hourlyRevenue = pgTable("hourly_revenue", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   revenueDate: date("revenueDate").notNull(),
-  hour: int("hour").notNull(),
-  revenue: decimal("revenue", { precision: 10, scale: 2 }).notNull().default("0"),
+  hour: integer("hour").notNull(),
+  revenue: numeric("revenue", { precision: 10, scale: 2 }).notNull().default("0"),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 }, (t) => ({
   uqHourlyRevenue: uniqueIndex("uq_hourly_revenue").on(t.storeId, t.revenueDate, t.hour),
 }));
@@ -358,11 +421,18 @@ export type HourlyRevenueRow = typeof hourlyRevenue.$inferSelect;
 export type InsertHourlyRevenue = typeof hourlyRevenue.$inferInsert;
 
 // ─── Pessoas — Staff Movements ────────────────────────────────────────────────
-export const staffMovements = mysqlTable("staff_movements", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
-  employeeId: int("employeeId").notNull(),
-  movementType: mysqlEnum("movementType", ["hire", "termination", "role_change", "salary_change"]).notNull(),
+export const staffMovementsMovementTypeEnum = pgEnum("staff_movements_movement_type", [
+  "hire",
+  "termination",
+  "role_change",
+  "salary_change",
+]);
+
+export const staffMovements = pgTable("staff_movements", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  employeeId: integer("employeeId").notNull(),
+  movementType: staffMovementsMovementTypeEnum("movementType").notNull(),
   movementDate: date("movementDate").notNull(),
   reason: text("reason"),
   previousValue: varchar("previousValue", { length: 256 }),
@@ -373,54 +443,58 @@ export type StaffMovementRow = typeof staffMovements.$inferSelect;
 export type InsertStaffMovement = typeof staffMovements.$inferInsert;
 
 // ─── Pessoas — Store People Config ───────────────────────────────────────────
-export const storePeopleConfig = mysqlTable("store_people_config", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull().unique(),
-  chargesPercent: decimal("chargesPercent", { precision: 5, scale: 2 }).notNull().default("70.00"),
-  productivityTarget: decimal("productivityTarget", { precision: 10, scale: 2 }).notNull().default("200.00"),
-  payrollTargetPercent: decimal("payrollTargetPercent", { precision: 5, scale: 2 }).notNull().default("18.00"),
-  hiringCost: decimal("hiringCost", { precision: 10, scale: 2 }).notNull().default("1500.00"),
-  operationStartHour: int("operationStartHour").notNull().default(8),
-  operationEndHour: int("operationEndHour").notNull().default(23),
+export const storePeopleConfig = pgTable("store_people_config", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull().unique(),
+  chargesPercent: numeric("chargesPercent", { precision: 5, scale: 2 }).notNull().default("70.00"),
+  productivityTarget: numeric("productivityTarget", { precision: 10, scale: 2 }).notNull().default("200.00"),
+  payrollTargetPercent: numeric("payrollTargetPercent", { precision: 5, scale: 2 }).notNull().default("18.00"),
+  hiringCost: numeric("hiringCost", { precision: 10, scale: 2 }).notNull().default("1500.00"),
+  operationStartHour: integer("operationStartHour").notNull().default(8),
+  operationEndHour: integer("operationEndHour").notNull().default(23),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 });
 export type StorePeopleConfigRow = typeof storePeopleConfig.$inferSelect;
 export type InsertStorePeopleConfig = typeof storePeopleConfig.$inferInsert;
 
 // ─── Sistema 2: Estoque / CMV ─────────────────────────────────────────────────
 
-export const stockProducts = mysqlTable("stock_products", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const stockProductsCurveABCEnum = pgEnum("stock_products_curve_abc", ["A", "B", "C"]);
+
+export const stockProducts = pgTable("stock_products", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   unit: varchar("unit", { length: 50 }).notNull().default("KG"),
-  unitCost: decimal("unitCost", { precision: 10, scale: 4 }).notNull().default("0.0000"),
-  curveABC: mysqlEnum("curveABC", ["A", "B", "C"]).notNull().default("B"),
+  unitCost: numeric("unitCost", { precision: 10, scale: 4 }).notNull().default("0.0000"),
+  curveABC: stockProductsCurveABCEnum("curveABC").notNull().default("B"),
   active: boolean("active").notNull().default(true),
-  categoryId: int("categoryId"),
-  sortOrder: int("sortOrder").notNull().default(0),
+  categoryId: integer("categoryId"),
+  sortOrder: integer("sortOrder").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 });
 export type StockProductRow = typeof stockProducts.$inferSelect;
 
-export const stockPeriods = mysqlTable("stock_periods", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
-  weekNumber: int("weekNumber").notNull(),
-  year: int("year").notNull(),
+export const stockPeriodsStatusEnum = pgEnum("stock_periods_status", ["open", "closed"]);
+
+export const stockPeriods = pgTable("stock_periods", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  weekNumber: integer("weekNumber").notNull(),
+  year: integer("year").notNull(),
   startDate: varchar("startDate", { length: 10 }).notNull(),
   endDate: varchar("endDate", { length: 10 }).notNull(),
-  status: mysqlEnum("status", ["open", "closed"]).notNull().default("open"),
+  status: stockPeriodsStatusEnum("status").notNull().default("open"),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
   // CMV Teórico — preenchidos ao fechar o período (migration 0018)
-  cmvTeoricoRs: decimal("cmvTeoricoRs", { precision: 14, scale: 2 }),
-  cmvTeoricoReceita: decimal("cmvTeoricoReceita", { precision: 14, scale: 2 }),
-  cmvTeoricoPct: decimal("cmvTeoricoPct", { precision: 8, scale: 4 }),
-  dispersaoRs: decimal("dispersaoRs", { precision: 14, scale: 2 }),
-  dispersaoPct: decimal("dispersaoPct", { precision: 8, scale: 4 }),
+  cmvTeoricoRs: numeric("cmvTeoricoRs", { precision: 14, scale: 2 }),
+  cmvTeoricoReceita: numeric("cmvTeoricoReceita", { precision: 14, scale: 2 }),
+  cmvTeoricoPct: numeric("cmvTeoricoPct", { precision: 8, scale: 4 }),
+  dispersaoRs: numeric("dispersaoRs", { precision: 14, scale: 2 }),
+  dispersaoPct: numeric("dispersaoPct", { precision: 8, scale: 4 }),
 });
 export type StockPeriodRow = typeof stockPeriods.$inferSelect;
 
@@ -431,32 +505,32 @@ export type StockPeriodRow = typeof stockPeriods.$inferSelect;
 // O banco as cria via migration 0011 (drizzle/0011_stock_movements_fix.sql).
 // O UNIQUE KEY uq_stock_movement(periodId, productId) também é criado pela migration 0011.
 // NÃO incluir consumption/cmvValue no INSERT de upsertStockMovement — MySQL rejeita.
-export const stockMovements = mysqlTable("stock_movements", {
-  id: int("id").autoincrement().primaryKey(),
-  periodId: int("periodId").notNull(),
-  productId: int("productId").notNull(),
-  storeId: int("storeId").notNull(),
-  openingStock: decimal("openingStock", { precision: 10, scale: 3 }).default("0"),
-  purchases: decimal("purchases", { precision: 10, scale: 3 }).default("0"),
-  closingStock: decimal("closingStock", { precision: 10, scale: 3 }).default("0"),
-  openingCost: decimal("openingCost", { precision: 10, scale: 2 }).default("0"),
-  purchasesCost: decimal("purchasesCost", { precision: 10, scale: 2 }).default("0"),
-  closingCost: decimal("closingCost", { precision: 10, scale: 2 }).default("0"),
-  alertFlags: json("alertFlags"),
+export const stockMovements = pgTable("stock_movements", {
+  id: serial("id").primaryKey(),
+  periodId: integer("periodId").notNull(),
+  productId: integer("productId").notNull(),
+  storeId: integer("storeId").notNull(),
+  openingStock: numeric("openingStock", { precision: 10, scale: 3 }).default("0"),
+  purchases: numeric("purchases", { precision: 10, scale: 3 }).default("0"),
+  closingStock: numeric("closingStock", { precision: 10, scale: 3 }).default("0"),
+  openingCost: numeric("openingCost", { precision: 10, scale: 2 }).default("0"),
+  purchasesCost: numeric("purchasesCost", { precision: 10, scale: 2 }).default("0"),
+  closingCost: numeric("closingCost", { precision: 10, scale: 2 }).default("0"),
+  alertFlags: jsonb("alertFlags"),
   createdAt: timestamp("createdAt").defaultNow(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
 });
 export type StockMovementRow = typeof stockMovements.$inferSelect;
 
-export const purchaseEntries = mysqlTable("purchase_entries", {
-  id: int("id").autoincrement().primaryKey(),
-  periodId: int("periodId").notNull(),
-  storeId: int("storeId").notNull(),
+export const purchaseEntries = pgTable("purchase_entries", {
+  id: serial("id").primaryKey(),
+  periodId: integer("periodId").notNull(),
+  storeId: integer("storeId").notNull(),
   supplier: varchar("supplier", { length: 255 }),
-  categoryId: int("categoryId"),
+  categoryId: integer("categoryId"),
   invoiceNumber: varchar("invoiceNumber", { length: 100 }),
   invoiceDate: varchar("invoiceDate", { length: 10 }),
-  totalValue: decimal("totalValue", { precision: 10, scale: 2 }).notNull().default("0"),
+  totalValue: numeric("totalValue", { precision: 10, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow(),
 });
@@ -466,8 +540,8 @@ export type PurchaseEntryRow = typeof purchaseEntries.$inferSelect;
 // Tabela de idempotência para handlers de cron (server/scheduled/).
 // UNIQUE(handler, run_date) garante que cada handler rode no máximo 1x por data.
 // Criada pela migration 0012.
-export const cronExecutions = mysqlTable("cron_executions", {
-  id: int("id").primaryKey().autoincrement(),
+export const cronExecutions = pgTable("cron_executions", {
+  id: serial("id").primaryKey(),
   handler: varchar("handler", { length: 128 }).notNull(),
   runDate: date("run_date").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -483,66 +557,68 @@ export type CronExecutionRow = typeof cronExecutions.$inferSelect;
 // Criadas pela migration 0013 (idempotente: CREATE TABLE IF NOT EXISTS).
 
 /** Configuração de remuneração por loja (parâmetros do programa). */
-export const remuneracaoConfig = mysqlTable("remuneracao_config", {
-  id: int("id").autoincrement().primaryKey(),
-  lojaId: int("loja_id").notNull(),
-  ativa: tinyint("ativa").default(1),
-  bonusBasePctFaturamento: decimal("bonus_base_pct_faturamento", { precision: 6, scale: 4 }).default("0.0150"),
-  gatilhoMinimoPct: decimal("gatilho_minimo_pct", { precision: 5, scale: 2 }).default("80.00"),
-  tetoMaximoPct: decimal("teto_maximo_pct", { precision: 5, scale: 2 }).default("120.00"),
+export const remuneracaoConfig = pgTable("remuneracao_config", {
+  id: serial("id").primaryKey(),
+  lojaId: integer("loja_id").notNull(),
+  ativa: boolean("ativa").default(true),
+  bonusBasePctFaturamento: numeric("bonus_base_pct_faturamento", { precision: 6, scale: 4 }).default("0.0150"),
+  gatilhoMinimoPct: numeric("gatilho_minimo_pct", { precision: 5, scale: 2 }).default("80.00"),
+  tetoMaximoPct: numeric("teto_maximo_pct", { precision: 5, scale: 2 }).default("120.00"),
   descricao: text("descricao"),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 export type RemuneracaoConfigRow = typeof remuneracaoConfig.$inferSelect;
 
 /** Regras de desconto vinculadas a uma configuração (gatilhos de elegibilidade). */
-export const remuneracaoRegras = mysqlTable("remuneracao_regras", {
-  id: int("id").autoincrement().primaryKey(),
-  configId: int("config_id").notNull(),
+export const remuneracaoRegras = pgTable("remuneracao_regras", {
+  id: serial("id").primaryKey(),
+  configId: integer("config_id").notNull(),
   titulo: varchar("titulo", { length: 200 }).notNull(),
   descricao: text("descricao"),
   tipo: varchar("tipo", { length: 20 }).default("manual"),
   indicador: varchar("indicador", { length: 50 }).default("custom"),
-  metaValor: decimal("meta_valor", { precision: 15, scale: 4 }),
+  metaValor: numeric("meta_valor", { precision: 15, scale: 4 }),
   metaOperador: varchar("meta_operador", { length: 10 }).default("gte"),
-  descontoPct: decimal("desconto_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
-  ordem: int("ordem").default(0),
-  ativa: tinyint("ativa").default(1),
+  descontoPct: numeric("desconto_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
+  ordem: integer("ordem").default(0),
+  ativa: boolean("ativa").default(true),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type RemuneracaoRegraRow = typeof remuneracaoRegras.$inferSelect;
 
 /** Apuração mensal de remuneração por loja/pessoa. */
-export const remuneracaoApuracao = mysqlTable("remuneracao_apuracao", {
-  id: int("id").autoincrement().primaryKey(),
-  lojaId: int("loja_id").notNull(),
-  mes: int("mes").notNull(),
-  ano: int("ano").notNull(),
-  faturamentoReal: decimal("faturamento_real", { precision: 15, scale: 2 }),
-  bonusBaseRs: decimal("bonus_base_rs", { precision: 15, scale: 2 }),
-  resultadoAtingimentoPct: decimal("resultado_atingimento_pct", { precision: 5, scale: 2 }),
+export const remuneracaoApuracaoPapelEnum = pgEnum("remuneracao_apuracao_papel", ["gestor", "lider"]);
+
+export const remuneracaoApuracao = pgTable("remuneracao_apuracao", {
+  id: serial("id").primaryKey(),
+  lojaId: integer("loja_id").notNull(),
+  mes: integer("mes").notNull(),
+  ano: integer("ano").notNull(),
+  faturamentoReal: numeric("faturamento_real", { precision: 15, scale: 2 }),
+  bonusBaseRs: numeric("bonus_base_rs", { precision: 15, scale: 2 }),
+  resultadoAtingimentoPct: numeric("resultado_atingimento_pct", { precision: 5, scale: 2 }),
   /** Variável final em R$ — sempre decimal(15,2), nunca float. */
-  bonusFinalRs: decimal("bonus_final_rs", { precision: 15, scale: 2 }),
+  bonusFinalRs: numeric("bonus_final_rs", { precision: 15, scale: 2 }),
   status: varchar("status", { length: 20 }).default("rascunho"),
   observacao: text("observacao"),
   aprovadoPor: varchar("aprovado_por", { length: 200 }),
   aprovadoEm: bigint("aprovado_em", { mode: "number" }),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-  employeeId: int("employee_id"),
-  papel: mysqlEnum("papel", ["gestor", "lider"]),
-  legado: tinyint("legado").notNull().default(0),
-  extratoJson: json("extrato_json"),
+  employeeId: integer("employee_id"),
+  papel: remuneracaoApuracaoPapelEnum("papel"),
+  legado: boolean("legado").notNull().default(false),
+  extratoJson: jsonb("extrato_json"),
 });
 export type RemuneracaoApuracaoRow = typeof remuneracaoApuracao.$inferSelect;
 
 /** Snapshot mensal da avaliação Google Places (apenas AGREGADO — sem texto de reviews individuais, conforme ToS). */
-export const googleRatings = mysqlTable("google_ratings", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const googleRatings = pgTable("google_ratings", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   period: varchar("period", { length: 7 }).notNull(), // YYYY-MM
-  rating: decimal("rating", { precision: 2, scale: 1 }).notNull(), // ex: 4.3
-  totalRatings: int("totalRatings").notNull(),
-  nota: decimal("nota", { precision: 5, scale: 2 }).notNull(), // rating × 20
+  rating: numeric("rating", { precision: 2, scale: 1 }).notNull(), // ex: 4.3
+  totalRatings: integer("totalRatings").notNull(),
+  nota: numeric("nota", { precision: 5, scale: 2 }).notNull(), // rating × 20
   fetchedAt: bigint("fetchedAt", { mode: "number" }).notNull(),
 });
 export type GoogleRatingRow = typeof googleRatings.$inferSelect;
@@ -550,13 +626,13 @@ export type GoogleRatingRow = typeof googleRatings.$inferSelect;
 // ─── Metas do Mês (MIC 4DX) ──────────────────────────────────────────────────
 // Tabelas criadas antes do Drizzle ser adotado — declaradas aqui para manter o
 // schema em controle de versão. Migration 0017 garante idempotência.
-export const metas = mysqlTable("metas", {
-  id: int("id").autoincrement().primaryKey(),
-  lojaId: int("loja_id").notNull(),
-  mes: int("mes").notNull(),
-  ano: int("ano").notNull(),
+export const metas = pgTable("metas", {
+  id: serial("id").primaryKey(),
+  lojaId: integer("loja_id").notNull(),
+  mes: integer("mes").notNull(),
+  ano: integer("ano").notNull(),
   titulo: varchar("titulo", { length: 200 }).notNull(),
-  valorMeta: decimal("valor_meta", { precision: 15, scale: 2 }),
+  valorMeta: numeric("valor_meta", { precision: 15, scale: 2 }),
   unidade: varchar("unidade", { length: 50 }).default("R$"),
   descricao: text("descricao"),
   status: varchar("status", { length: 20 }).default("ativa"),
@@ -565,68 +641,68 @@ export const metas = mysqlTable("metas", {
 });
 export type MetaRow = typeof metas.$inferSelect;
 
-export const medidasDirecao = mysqlTable("medidas_direcao", {
-  id: int("id").autoincrement().primaryKey(),
-  metaId: int("meta_id").notNull(),
-  lojaId: int("loja_id").notNull(),
+export const medidasDirecao = pgTable("medidas_direcao", {
+  id: serial("id").primaryKey(),
+  metaId: integer("meta_id").notNull(),
+  lojaId: integer("loja_id").notNull(),
   titulo: varchar("titulo", { length: 200 }).notNull(),
   descricao: text("descricao"),
   indicador: varchar("indicador", { length: 50 }).default("custom"),
-  metaValor: decimal("meta_valor", { precision: 15, scale: 4 }),
+  metaValor: numeric("meta_valor", { precision: 15, scale: 4 }),
   metaOperador: varchar("meta_operador", { length: 10 }).default("gte"),
   unidade: varchar("unidade", { length: 50 }).default("%"),
-  pesoRemuneracaoPct: decimal("peso_remuneracao_pct", { precision: 5, scale: 2 }).default("0"),
-  ordem: int("ordem").default(0),
-  ativa: tinyint("ativa").default(1),
+  pesoRemuneracaoPct: numeric("peso_remuneracao_pct", { precision: 5, scale: 2 }).default("0"),
+  ordem: integer("ordem").default(0),
+  ativa: boolean("ativa").default(true),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type MedidaDirecaoRow = typeof medidasDirecao.$inferSelect;
 
-export const medidasProgresso = mysqlTable("medidas_progresso", {
-  id: int("id").autoincrement().primaryKey(),
-  medidaId: int("medida_id").notNull(),
-  mes: int("mes").notNull(),
-  ano: int("ano").notNull(),
-  valorAtual: decimal("valor_atual", { precision: 15, scale: 4 }),
-  atingida: tinyint("atingida").default(0),
+export const medidasProgresso = pgTable("medidas_progresso", {
+  id: serial("id").primaryKey(),
+  medidaId: integer("medida_id").notNull(),
+  mes: integer("mes").notNull(),
+  ano: integer("ano").notNull(),
+  valorAtual: numeric("valor_atual", { precision: 15, scale: 4 }),
+  atingida: boolean("atingida").default(false),
   observacao: text("observacao"),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 export type MedidaProgressoRow = typeof medidasProgresso.$inferSelect;
 
 // ─── Despesas do Mês (DRE Viva) ───────────────────────────────────────────────
-export const despesasMes = mysqlTable("despesas_mes", {
-  id: int("id").autoincrement().primaryKey(),
-  storeId: int("storeId").notNull(),
+export const despesasMes = pgTable("despesas_mes", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
   period: varchar("period", { length: 7 }).notNull(),
   categoria: varchar("categoria", { length: 50 }).notNull(),
-  valor: decimal("valor", { precision: 14, scale: 2 }).notNull(),
+  valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
   data: date("data").notNull(),
   descricao: varchar("descricao", { length: 500 }),
   fonte: varchar("fonte", { length: 30 }).notNull().default("manual"),
-  conferido: tinyint("conferido").notNull().default(0),
-  createdBy: int("createdBy"),
+  conferido: boolean("conferido").notNull().default(false),
+  createdBy: integer("createdBy"),
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
 });
 
 // ─── DRE Benchmarks Mensais (Benchmarks por segmento/faixa/rede) ──────────────
-export const dreBenchmarksMensais = mysqlTable("dre_benchmarks_mensais", {
-  id: int("id").autoincrement().primaryKey(),
+export const dreBenchmarksMensais = pgTable("dre_benchmarks_mensais", {
+  id: serial("id").primaryKey(),
   periodo: varchar("periodo", { length: 7 }).notNull(), // YYYY-MM
   /** 'segmento' | 'faixa' | 'rede' */
   nivel: varchar("nivel", { length: 20 }).notNull(),
   /** Valor do segmento/faixa ou 'rede' */
   grupo: varchar("grupo", { length: 50 }).notNull(),
-  nLojas: int("n_lojas").notNull().default(0),
-  cmvPctMediana: decimal("cmv_pct_mediana", { precision: 8, scale: 4 }),
-  cmvPctP25: decimal("cmv_pct_p25", { precision: 8, scale: 4 }),
-  cmvPctP75: decimal("cmv_pct_p75", { precision: 8, scale: 4 }),
-  encargosPctMediana: decimal("encargos_pct_mediana", { precision: 8, scale: 4 }),
-  encargosPctP25: decimal("encargos_pct_p25", { precision: 8, scale: 4 }),
-  encargosPctP75: decimal("encargos_pct_p75", { precision: 8, scale: 4 }),
-  receitaMediana: decimal("receita_mediana", { precision: 14, scale: 2 }),
-  receitaP25: decimal("receita_p25", { precision: 14, scale: 2 }),
-  receitaP75: decimal("receita_p75", { precision: 14, scale: 2 }),
+  nLojas: integer("n_lojas").notNull().default(0),
+  cmvPctMediana: numeric("cmv_pct_mediana", { precision: 8, scale: 4 }),
+  cmvPctP25: numeric("cmv_pct_p25", { precision: 8, scale: 4 }),
+  cmvPctP75: numeric("cmv_pct_p75", { precision: 8, scale: 4 }),
+  encargosPctMediana: numeric("encargos_pct_mediana", { precision: 8, scale: 4 }),
+  encargosPctP25: numeric("encargos_pct_p25", { precision: 8, scale: 4 }),
+  encargosPctP75: numeric("encargos_pct_p75", { precision: 8, scale: 4 }),
+  receitaMediana: numeric("receita_mediana", { precision: 14, scale: 2 }),
+  receitaP25: numeric("receita_p25", { precision: 14, scale: 2 }),
+  receitaP75: numeric("receita_p75", { precision: 14, scale: 2 }),
   createdAt: bigint("createdAt", { mode: "number" }).notNull().default(0),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull().default(0),
 });
