@@ -1,5 +1,7 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import * as schema from "../drizzle/schema";
 import {
   ActionPlan,
   Commitment,
@@ -31,31 +33,155 @@ import {
   users,
 } from "../drizzle/schema";
 
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+let _pool: Pool | null = null;
+
+/**
+ * Traduz SQL cru do dialeto MySQL para Postgres.
+ * Port MySQL → Postgres (Supabase). Aplicado a TODAS as queries cruas que passam
+ * pelo shim de `$client.promise().execute()` / `.query()` e por `rawQuery`.
+ *
+ * Faz, fora de literais de string:
+ *  - placeholders `?` → `$1, $2, ...` (posicionais do Postgres);
+ *  - identificadores em crase MySQL (`col`) → aspas duplas Postgres ("col");
+ *  - identificadores camelCase nus (storeId, entryDate, ...) → "storeId" (no
+ *    Postgres identificadores sem aspas viram minúsculas; as colunas foram
+ *    criadas em camelCase pelo drizzle, logo PRECISAM de aspas);
+ *  - funções MySQL sem equivalente direto: IFNULL→COALESCE, CURDATE()→CURRENT_DATE,
+ *    UNIX_TIMESTAMP()→extract(epoch...).
+ */
+export function translateMySqlToPg(input: string): string {
+  let out = "";
+  let placeholder = 0;
+  let i = 0;
+  const n = input.length;
+  while (i < n) {
+    const ch = input[i];
+    // Literal de string com aspas simples — copiar verbatim (trata '' escapado)
+    if (ch === "'") {
+      out += ch;
+      i++;
+      while (i < n) {
+        out += input[i];
+        if (input[i] === "'") {
+          if (input[i + 1] === "'") { out += input[i + 1]; i += 2; continue; }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // Identificador já com aspas duplas — copiar verbatim
+    if (ch === '"') {
+      out += ch;
+      i++;
+      while (i < n) {
+        out += input[i];
+        if (input[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Identificador em crase (MySQL) → aspas duplas (Postgres)
+    if (ch === "`") {
+      i++;
+      let ident = "";
+      while (i < n && input[i] !== "`") { ident += input[i]; i++; }
+      if (input[i] === "`") i++;
+      out += `"${ident}"`;
+      continue;
+    }
+    // Placeholder posicional
+    if (ch === "?") {
+      placeholder++;
+      out += `$${placeholder}`;
+      i++;
+      continue;
+    }
+    // Palavra (identificador ou keyword/função)
+    if (/[A-Za-z_]/.test(ch)) {
+      let word = "";
+      while (i < n && /[A-Za-z0-9_]/.test(input[i])) { word += input[i]; i++; }
+      // camelCase (tem minúscula E maiúscula) → é uma coluna/identificador e
+      // precisa de aspas no Postgres. ALL_CAPS (keywords/funcs) e all_lower
+      // (tabelas snake_case, keywords) ficam intactos.
+      if (/[a-z]/.test(word) && /[A-Z]/.test(word)) {
+        out += `"${word}"`;
+      } else {
+        out += word;
+      }
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  // Funções MySQL → Postgres (seguras, aplicadas após o scan de literais acima
+  // seria ideal; aqui são all-caps e não colidem com valores camelCase).
+  out = out.replace(/\bIFNULL\s*\(/gi, "COALESCE(");
+  out = out.replace(/\bCURDATE\s*\(\s*\)/gi, "CURRENT_DATE");
+  out = out.replace(/\bUNIX_TIMESTAMP\s*\(\s*\)/gi, "extract(epoch from now())");
+  return out;
+}
+
+/** Executa SQL cru no pool pg aplicando a tradução de dialeto. Retorna no formato
+ * mysql2 `[rows, fields]` para compatibilidade com o código existente. Para INSERT
+ * com `RETURNING id`, anexa `insertId`/`affectedRows` ao array de linhas. */
+async function runRaw(poolClient: Pool, rawSql: string, params: unknown[] = []): Promise<[any[], unknown]> {
+  const text = translateMySqlToPg(rawSql);
+  const res = await poolClient.query(text, params);
+  const rows = res.rows as any[];
+  // Compat mysql2 ResultSetHeader: insertId / affectedRows
+  (rows as any).insertId = rows.length > 0 && rows[0] && "id" in rows[0] ? rows[0].id : 0;
+  (rows as any).affectedRows = res.rowCount ?? rows.length;
+  return [rows, res.fields];
+}
+
+/** Shim que reproduz a API `$client.promise().execute()/query()` do mysql2 sobre
+ * o pool do pg. Mantém o contrato que o código (e os mocks de teste) esperam. */
+function makeClientShim(poolClient: Pool) {
+  const api = {
+    execute: (rawSql: string, params: unknown[] = []) => runRaw(poolClient, rawSql, params),
+    query: (rawSql: string, params: unknown[] = []) => runRaw(poolClient, rawSql, params),
+  };
+  return {
+    promise: () => api,
+    // Compat: alguns callsites podem acessar execute/query direto no $client
+    ...api,
+  };
+}
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _pool = new Pool({ connectionString: process.env.DATABASE_URL });
+      _db = drizzle(_pool, { schema });
+      // Substitui o $client (que seria o Pool pg) pelo shim compatível com mysql2.
+      (_db as any).$client = makeClientShim(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _pool = null;
     }
   }
   return _db;
 }
 
+/** Acesso direto ao pool pg (quando necessário o padrão nativo pool.query). */
+export async function getPool(): Promise<Pool | null> {
+  await getDb();
+  return _pool;
+}
 
 /**
  * Helper centralizado para queries raw SQL parametrizadas.
- * Usa $client.promise().execute() — o padrão correto para o pool callback do mysql2.
+ * Traduz MySQL→Postgres e executa via pool.query, retornando result.rows.
  * TODOS os arquivos devem usar este helper ou replicar o mesmo padrão.
  */
 export async function rawQuery(sql: string, params: unknown[] = []): Promise<Record<string, unknown>[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const client = (db as any).$client;
-  const [rows] = await client.promise().execute(sql, params);
+  const [rows] = await (db as any).$client.promise().execute(sql, params);
   return rows as Record<string, unknown>[];
 }
 
@@ -72,7 +198,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (user.lastSignedIn !== undefined) { values.lastSignedIn = user.lastSignedIn; updateSet.lastSignedIn = user.lastSignedIn; }
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  updateSet.updatedAt = new Date();
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string): Promise<User | undefined> {
@@ -106,8 +233,8 @@ export async function getStoreBySlug(slug: string): Promise<Store | undefined> {
 export async function createStore(data: InsertStore): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(stores).values(data);
-  return (result[0] as any).insertId;
+  const result = await db.insert(stores).values(data).returning({ id: stores.id });
+  return result[0].id;
 }
 
 export async function updateStore(id: number, data: Partial<InsertStore>): Promise<void> {
@@ -128,7 +255,7 @@ export async function getStoresByUserId(userId: number): Promise<Store[]> {
 export async function linkUserToStore(userId: number, storeId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.insert(userStores).values({ userId, storeId }).onDuplicateKeyUpdate({ set: { userId } });
+  await db.insert(userStores).values({ userId, storeId }).onConflictDoNothing({ target: [userStores.userId, userStores.storeId] });
 }
 
 // ─── Daily Entries ────────────────────────────────────────────────────────────
@@ -152,8 +279,9 @@ export async function getDailyEntry(storeId: number, date: string): Promise<Dail
 export async function upsertDailyEntry(data: InsertDailyEntry): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.insert(dailyEntries).values(data).onDuplicateKeyUpdate({
-    set: { revenue: data.revenue, invoices: data.invoices, extraLabor: data.extraLabor, atendimentos: data.atendimentos, notes: data.notes },
+  await db.insert(dailyEntries).values(data).onConflictDoUpdate({
+    target: [dailyEntries.storeId, dailyEntries.entryDate],
+    set: { revenue: data.revenue, invoices: data.invoices, extraLabor: data.extraLabor, atendimentos: data.atendimentos, notes: data.notes, updatedAt: new Date() },
   });
 }
 
@@ -223,8 +351,8 @@ export async function getStockItems(storeId: number): Promise<StockItem[]> {
 export async function createStockItem(data: { storeId: number; name: string; unit: string; curve: "A" | "B" | "C"; avgCost: string }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(stockItems).values(data);
-  return (result[0] as any).insertId;
+  const result = await db.insert(stockItems).values(data).returning({ id: stockItems.id });
+  return result[0].id;
 }
 
 // ─── Stock Counts ─────────────────────────────────────────────────────────────
@@ -253,8 +381,8 @@ export async function createStockCount(data: InsertStockCount): Promise<number> 
       .where(eq(stockCounts.id, existing[0].id));
     return existing[0].id;
   }
-  const result = await db.insert(stockCounts).values(data);
-  return (result[0] as any).insertId;
+  const result = await db.insert(stockCounts).values(data).returning({ id: stockCounts.id });
+  return result[0].id;
 }
 
 // ─── Action Plans ─────────────────────────────────────────────────────────────
@@ -267,8 +395,8 @@ export async function getActionPlans(storeId: number): Promise<ActionPlan[]> {
 export async function createActionPlan(data: InsertActionPlan): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  const result = await db.insert(actionPlans).values(data);
-  return (result[0] as any).insertId;
+  const result = await db.insert(actionPlans).values(data).returning({ id: actionPlans.id });
+  return result[0].id;
 }
 
 export async function updateActionPlan(id: number, data: Partial<InsertActionPlan>): Promise<void> {
@@ -297,7 +425,10 @@ export async function upsertCommitment(data: InsertCommitment): Promise<void> {
   const db = await getDb();
   if (!db) return;
   const { storeId, period, ...rest } = data;
-  await db.insert(commitments).values(data).onDuplicateKeyUpdate({ set: rest });
+  await db.insert(commitments).values(data).onConflictDoUpdate({
+    target: [commitments.storeId, commitments.period],
+    set: { ...rest, updatedAt: new Date() },
+  });
 }
 // ─── Monthly Quality ──────────────────────────────────────────────────────────
 export async function getMonthlyQuality(storeId: number, period: string): Promise<MonthlyQuality | undefined> {
@@ -348,8 +479,10 @@ export async function upsertMonthlyQuality(data: UpsertMonthlyQualityData): Prom
     checklistUpdatedBy: data.checklistUpdatedBy ?? null,
     checklistUpdatedAt: data.checklistUpdatedAt ?? null,
   };
-  await db.insert(monthlyQuality).values(insertData).onDuplicateKeyUpdate({
+  await db.insert(monthlyQuality).values(insertData).onConflictDoUpdate({
+    target: [monthlyQuality.storeId, monthlyQuality.period],
     set: {
+      updatedAt: new Date(),
       ...(data.qualityGoogle !== undefined && { qualityGoogle: data.qualityGoogle }),
       ...(data.qualityAudit !== undefined && { qualityAudit: data.qualityAudit }),
       ...(data.qualityChecklist !== undefined && { qualityChecklist: data.qualityChecklist }),
