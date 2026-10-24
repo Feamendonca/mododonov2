@@ -88,7 +88,9 @@ export const userStores = pgTable("user_stores", {
   userId: integer("userId").notNull(),
   storeId: integer("storeId").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqUserStore: uniqueIndex("uq_user_store").on(t.userId, t.storeId),
+}));
 
 // ─── Daily Entries (Lançamentos Diários) ─────────────────────────────────────
 export const dailyEntries = pgTable("daily_entries", {
@@ -102,7 +104,9 @@ export const dailyEntries = pgTable("daily_entries", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqDailyEntry: uniqueIndex("uq_daily_entry").on(t.storeId, t.entryDate),
+}));
 
 export type DailyEntry = typeof dailyEntries.$inferSelect;
 export type InsertDailyEntry = typeof dailyEntries.$inferInsert;
@@ -209,7 +213,9 @@ export const commitments = pgTable("commitments", {
   applyContent: boolean("applyContent").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqCommitment: uniqueIndex("uq_commitment").on(t.storeId, t.period),
+}));
 
 export type Commitment = typeof commitments.$inferSelect;
 export type InsertCommitment = typeof commitments.$inferInsert;
@@ -275,7 +281,9 @@ export const monthlyQuality = pgTable("monthly_quality", {
   checklistUpdatedAt: timestamp("checklistUpdatedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqMonthlyQuality: uniqueIndex("uq_monthly_quality").on(t.storeId, t.period),
+}));
 
 export type MonthlyQuality = typeof monthlyQuality.$inferSelect;
 
@@ -295,7 +303,9 @@ export const gatilhosMensais = pgTable("gatilhos_mensais", {
   updatedBy: varchar("updatedBy", { length: 128 }),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqGatilhoMensal: uniqueIndex("uq_gatilho_mensal").on(t.employeeId, t.storeId, t.period),
+}));
 
 export type GatilhoMensal = typeof gatilhosMensais.$inferSelect;
 export type InsertGatilhoMensal = typeof gatilhosMensais.$inferInsert;
@@ -346,7 +356,9 @@ export const storeHolidayRules = pgTable("store_holiday_rules", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqStoreHolidayRule: uniqueIndex("uq_store_holiday_rule").on(t.storeId, t.ruleDate),
+}));
 
 export type StoreHolidayRule = typeof storeHolidayRules.$inferSelect;
 export type InsertStoreHolidayRule = typeof storeHolidayRules.$inferInsert;
@@ -519,7 +531,9 @@ export const stockMovements = pgTable("stock_movements", {
   alertFlags: jsonb("alertFlags"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),
-});
+}, (t) => ({
+  uqStockMovement: uniqueIndex("uq_stock_movement").on(t.periodId, t.productId),
+}));
 export type StockMovementRow = typeof stockMovements.$inferSelect;
 
 export const purchaseEntries = pgTable("purchase_entries", {
@@ -620,7 +634,9 @@ export const googleRatings = pgTable("google_ratings", {
   totalRatings: integer("totalRatings").notNull(),
   nota: numeric("nota", { precision: 5, scale: 2 }).notNull(), // rating × 20
   fetchedAt: bigint("fetchedAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  uqGoogleRating: uniqueIndex("uq_google_rating").on(t.storeId, t.period),
+}));
 export type GoogleRatingRow = typeof googleRatings.$inferSelect;
 
 // ─── Metas do Mês (MIC 4DX) ──────────────────────────────────────────────────
@@ -667,7 +683,9 @@ export const medidasProgresso = pgTable("medidas_progresso", {
   atingida: boolean("atingida").default(false),
   observacao: text("observacao"),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  uqMedidaProgresso: uniqueIndex("uq_medida_progresso").on(t.medidaId, t.mes, t.ano),
+}));
 export type MedidaProgressoRow = typeof medidasProgresso.$inferSelect;
 
 // ─── Despesas do Mês (DRE Viva) ───────────────────────────────────────────────
@@ -705,6 +723,170 @@ export const dreBenchmarksMensais = pgTable("dre_benchmarks_mensais", {
   receitaP75: numeric("receita_p75", { precision: 14, scale: 2 }),
   createdAt: bigint("createdAt", { mode: "number" }).notNull().default(0),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull().default(0),
-});
+}, (t) => ({
+  uqDreBenchmark: uniqueIndex("uq_dre_benchmark").on(t.periodo, t.nivel, t.grupo),
+}));
 
 export type DreBenchmarkMensal = typeof dreBenchmarksMensais.$inferSelect;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tabelas portadas das migrations legadas MySQL (0022/0027/0028) + orcamentos.
+// Criadas no schema para o port Postgres (antes só existiam via SQL cru/externo).
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── Caixa Diário (quebra de receita por forma de pagamento) — migration 0027 ──
+export const caixaDiario = pgTable("caixa_diario", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  data: varchar("data", { length: 10 }).notNull(), // YYYY-MM-DD
+  dinheiro: numeric("dinheiro", { precision: 12, scale: 2 }).default("0"),
+  debito: numeric("debito", { precision: 12, scale: 2 }).default("0"),
+  credito: numeric("credito", { precision: 12, scale: 2 }).default("0"),
+  vale: numeric("vale", { precision: 12, scale: 2 }).default("0"),
+  pix: numeric("pix", { precision: 12, scale: 2 }).default("0"),
+  apps: numeric("apps", { precision: 12, scale: 2 }).default("0"),
+  atendimentos: integer("atendimentos").default(0),
+  createdBy: integer("createdBy"),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }),
+}, (t) => ({
+  uqCaixaStoreData: uniqueIndex("uq_caixa_store_data").on(t.storeId, t.data),
+}));
+export type CaixaDiarioRow = typeof caixaDiario.$inferSelect;
+
+// ─── Reuniões (cadência semanal) — migration 0028 ─────────────────────────────
+export const reunioes = pgTable("reunioes", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  data: varchar("data", { length: 10 }).notNull(),
+  participantes: varchar("participantes", { length: 300 }),
+  observacao: text("observacao"),
+  createdBy: integer("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow(),
+});
+export type ReuniaoRow = typeof reunioes.$inferSelect;
+
+export const reuniaoCombinados = pgTable("reuniao_combinados", {
+  id: serial("id").primaryKey(),
+  reuniaoId: integer("reuniaoId").notNull(),
+  storeId: integer("storeId").notNull(),
+  descricao: varchar("descricao", { length: 500 }).notNull(),
+  responsavel: varchar("responsavel", { length: 150 }),
+  prazo: varchar("prazo", { length: 10 }),
+  status: varchar("status", { length: 10 }).notNull().default("aberto"),
+  medidaId: integer("medidaId"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  concluidoAt: timestamp("concluidoAt"),
+});
+export type ReuniaoCombinadoRow = typeof reuniaoCombinados.$inferSelect;
+
+// ─── DRE Histórico Mensal — migration 0022 ────────────────────────────────────
+export const dreHistoricoMensalFonteEnum = pgEnum("dre_historico_mensal_fonte", ["importado", "dre_viva"]);
+
+export const dreHistoricoMensal = pgTable("dre_historico_mensal", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").notNull(),
+  anoMes: varchar("ano_mes", { length: 7 }).notNull(), // YYYY-MM
+  faturamento: numeric("faturamento", { precision: 14, scale: 2 }),
+  cmv: numeric("cmv", { precision: 14, scale: 2 }),
+  folha: numeric("folha", { precision: 14, scale: 2 }),
+  custosFixos: numeric("custos_fixos", { precision: 14, scale: 2 }),
+  custosVariaveis: numeric("custos_variaveis", { precision: 14, scale: 2 }),
+  impostos: numeric("impostos", { precision: 14, scale: 2 }),
+  ebitda: numeric("ebitda", { precision: 14, scale: 2 }),
+  fonte: dreHistoricoMensalFonteEnum("fonte").notNull().default("importado"),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull().default(0),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull().default(0),
+}, (t) => ({
+  uqHistorico: uniqueIndex("uq_historico").on(t.storeId, t.anoMes),
+}));
+export type DreHistoricoMensalRow = typeof dreHistoricoMensal.$inferSelect;
+
+// ─── Benchmarks Agregados — migration 0022 ────────────────────────────────────
+export const benchmarksAgregadosMetricaEnum = pgEnum("benchmarks_agregados_metrica", [
+  "cmv_pct",
+  "folha_pct",
+  "ebitda_pct",
+  "custos_fixos_pct",
+]);
+
+export const benchmarksAgregados = pgTable("benchmarks_agregados", {
+  id: serial("id").primaryKey(),
+  segmento: varchar("segmento", { length: 64 }).notNull(),
+  anoMes: varchar("ano_mes", { length: 7 }).notNull(),
+  metrica: benchmarksAgregadosMetricaEnum("metrica").notNull(),
+  p25: numeric("p25", { precision: 8, scale: 4 }),
+  mediana: numeric("mediana", { precision: 8, scale: 4 }),
+  p75: numeric("p75", { precision: 8, scale: 4 }),
+  nLojas: integer("n_lojas").notNull().default(0),
+  geradoEm: bigint("gerado_em", { mode: "number" }).notNull().default(0),
+}, (t) => ({
+  uqBenchmark: uniqueIndex("uq_benchmark_agregado").on(t.segmento, t.anoMes, t.metrica),
+}));
+export type BenchmarkAgregadoRow = typeof benchmarksAgregados.$inferSelect;
+
+// ─── Orçamentos (DRE orçada por loja/mês) — migrations 0016/0020 ──────────────
+// Colunas inferidas de server/db-orcamento.ts (createOrcamento). Colunas *_pct e
+// monetárias = numeric; *_tipo = varchar ('rs' | 'pct' | 'auto'); epochs = bigint.
+export const orcamentos = pgTable("orcamentos", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").notNull(),
+  periodoInicio: varchar("periodo_inicio", { length: 10 }).notNull(),
+  periodoFim: varchar("periodo_fim", { length: 10 }),
+  tipo: varchar("tipo", { length: 20 }),
+  receitaBruta: numeric("receita_bruta", { precision: 14, scale: 2 }),
+  ticketMedio: numeric("ticket_medio", { precision: 14, scale: 2 }),
+  diasOperacao: integer("dias_operacao"),
+  taxaCartaoPct: numeric("taxa_cartao_pct", { precision: 8, scale: 4 }),
+  taxaCartaoTipo: varchar("taxa_cartao_tipo", { length: 10 }),
+  taxaDeliveryPct: numeric("taxa_delivery_pct", { precision: 8, scale: 4 }),
+  taxaDeliveryTipo: varchar("taxa_delivery_tipo", { length: 10 }),
+  impostosPct: numeric("impostos_pct", { precision: 8, scale: 4 }),
+  impostosTipo: varchar("impostos_tipo", { length: 10 }),
+  cmvPct: numeric("cmv_pct", { precision: 8, scale: 4 }),
+  cmvTipo: varchar("cmv_tipo", { length: 10 }),
+  royaltiesPct: numeric("royalties_pct", { precision: 8, scale: 4 }),
+  royaltiesTipo: varchar("royalties_tipo", { length: 10 }),
+  fundoMarketingPct: numeric("fundo_marketing_pct", { precision: 8, scale: 4 }),
+  fundoMarketingTipo: varchar("fundo_marketing_tipo", { length: 10 }),
+  aluguel: numeric("aluguel", { precision: 14, scale: 2 }),
+  aluguelTipo: varchar("aluguel_tipo", { length: 10 }),
+  condominio: numeric("condominio", { precision: 14, scale: 2 }),
+  condominioTipo: varchar("condominio_tipo", { length: 10 }),
+  energia: numeric("energia", { precision: 14, scale: 2 }),
+  energiaTipo: varchar("energia_tipo", { length: 10 }),
+  gas: numeric("gas", { precision: 14, scale: 2 }),
+  gasTipo: varchar("gas_tipo", { length: 10 }),
+  agua: numeric("agua", { precision: 14, scale: 2 }),
+  aguaTipo: varchar("agua_tipo", { length: 10 }),
+  outrosOcupacao: numeric("outros_ocupacao", { precision: 14, scale: 2 }),
+  outrosOcupacaoTipo: varchar("outros_ocupacao_tipo", { length: 10 }),
+  contabilidade: numeric("contabilidade", { precision: 14, scale: 2 }),
+  contabilidadeTipo: varchar("contabilidade_tipo", { length: 10 }),
+  sistemas: numeric("sistemas", { precision: 14, scale: 2 }),
+  sistemasTipo: varchar("sistemas_tipo", { length: 10 }),
+  sanitarismo: numeric("sanitarismo", { precision: 14, scale: 2 }),
+  sanitarismoTipo: varchar("sanitarismo_tipo", { length: 10 }),
+  outrosServicos: numeric("outros_servicos", { precision: 14, scale: 2 }),
+  outrosServicosTipo: varchar("outros_servicos_tipo", { length: 10 }),
+  juros: numeric("juros", { precision: 14, scale: 2 }),
+  jurosTipo: varchar("juros_tipo", { length: 10 }),
+  tarifasBancarias: numeric("tarifas_bancarias", { precision: 14, scale: 2 }),
+  tarifasBancariasTipo: varchar("tarifas_bancarias_tipo", { length: 10 }),
+  marketing: numeric("marketing", { precision: 14, scale: 2 }),
+  marketingTipo: varchar("marketing_tipo", { length: 10 }),
+  outrasDespesas: numeric("outras_despesas", { precision: 14, scale: 2 }),
+  outrasDespesasTipo: varchar("outras_despesas_tipo", { length: 10 }),
+  proLabore: numeric("pro_labore", { precision: 14, scale: 2 }),
+  proLaboreTipo: varchar("pro_labore_tipo", { length: 10 }),
+  encargosPct: numeric("encargos_pct", { precision: 8, scale: 4 }),
+  encargosTipo: varchar("encargos_tipo", { length: 10 }),
+  notas: text("notas"),
+  iaRevisaoJson: text("ia_revisao_json"),
+  status: varchar("status", { length: 20 }).notNull().default("rascunho"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => ({
+  uqOrcamentoStorePeriodo: uniqueIndex("uq_orcamento_store_periodo").on(t.storeId, t.periodoInicio),
+}));
+export type OrcamentoRow = typeof orcamentos.$inferSelect;
