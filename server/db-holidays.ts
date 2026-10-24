@@ -83,7 +83,7 @@ export async function upsertStoreHolidayRule(
   await (db as any).$client.promise().execute(
     `INSERT INTO store_holiday_rules (store_id, rule_date, event_type, multiplier, source, notes)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
+     ON CONFLICT (store_id, rule_date) DO UPDATE SET
        event_type = VALUES(event_type),
        multiplier = VALUES(multiplier),
        source = VALUES(source),

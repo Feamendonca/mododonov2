@@ -3,7 +3,7 @@
  * Handles product categories, products, stock periods, movements and purchase entries.
  */
 import { and, desc, eq, sql } from "drizzle-orm";
-import { getDb } from "./db";
+import { getDb, rawQuery } from "./db";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -370,21 +370,24 @@ export async function upsertStockMovement(data: {
   const db = await getDb();
   if (!db) return;
   const flags = data.alertFlags ? JSON.stringify(data.alertFlags) : null;
-  await db.execute(
-    sql`INSERT INTO stock_movements
+  // Port Postgres: via rawQuery (shim traduz ? → $n, camelCase → "camelCase",
+  // ON CONFLICT + VALUES() → EXCLUDED.).
+  await rawQuery(
+    `INSERT INTO stock_movements
         (periodId, productId, storeId, openingStock, purchases, closingStock, openingCost, purchasesCost, closingCost, alertFlags)
-        VALUES (${data.periodId}, ${data.productId}, ${data.storeId},
-                ${data.openingStock ?? null}, ${data.purchases ?? null}, ${data.closingStock ?? null},
-                ${data.openingCost ?? null}, ${data.purchasesCost ?? null}, ${data.closingCost ?? null},
-                ${flags})
-        ON DUPLICATE KEY UPDATE
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (periodId, productId) DO UPDATE SET
           openingStock  = COALESCE(VALUES(openingStock),  openingStock),
           purchases     = COALESCE(VALUES(purchases),     purchases),
           closingStock  = COALESCE(VALUES(closingStock),  closingStock),
           openingCost   = COALESCE(VALUES(openingCost),   openingCost),
           purchasesCost = COALESCE(VALUES(purchasesCost), purchasesCost),
           closingCost   = COALESCE(VALUES(closingCost),   closingCost),
-          alertFlags    = COALESCE(VALUES(alertFlags),    alertFlags)`
+          alertFlags    = COALESCE(VALUES(alertFlags),    alertFlags),
+          updatedAt     = NOW()`,
+    [data.periodId, data.productId, data.storeId,
+     data.openingStock ?? null, data.purchases ?? null, data.closingStock ?? null,
+     data.openingCost ?? null, data.purchasesCost ?? null, data.closingCost ?? null, flags]
   );
 }
 

@@ -121,6 +121,16 @@ export function translateMySqlToPg(input: string): string {
   out = out.replace(/\bIFNULL\s*\(/gi, "COALESCE(");
   out = out.replace(/\bCURDATE\s*\(\s*\)/gi, "CURRENT_DATE");
   out = out.replace(/\bUNIX_TIMESTAMP\s*\(\s*\)/gi, "extract(epoch from now())");
+  // Upsert MySQL→Postgres: no bloco após ON CONFLICT, VALUES(col) → EXCLUDED.col.
+  // Os sites de código trocam `ON DUPLICATE KEY UPDATE` por `ON CONFLICT (...) DO
+  // UPDATE SET` e mantêm `VALUES(col)` — convertido aqui de forma segura (a cláusula
+  // INSERT ... VALUES (...) fica ANTES do ON CONFLICT e não é tocada).
+  const ccIdx = out.search(/ON\s+CONFLICT/i);
+  if (ccIdx >= 0) {
+    const head = out.slice(0, ccIdx);
+    const tail = out.slice(ccIdx).replace(/\bVALUES\s*\(\s*("[^"]+"|[A-Za-z0-9_]+)\s*\)/gi, "EXCLUDED.$1");
+    out = head + tail;
+  }
   return out;
 }
 
@@ -324,7 +334,7 @@ export async function upsertDailyEntryFields(
 
   if (setCols.length === 0) return; // nada a atualizar
 
-  const sql = `INSERT INTO daily_entries (${insertCols.join(", ")}) VALUES (${insertPlaceholders.join(", ")}) ON DUPLICATE KEY UPDATE ${setCols.join(", ")}`;
+  const sql = `INSERT INTO daily_entries (${insertCols.join(", ")}) VALUES (${insertPlaceholders.join(", ")}) ON CONFLICT (storeId, entryDate) DO UPDATE SET ${setCols.join(", ")}, updatedAt = NOW()`;
   await rawQuery(sql, params);
 }
 

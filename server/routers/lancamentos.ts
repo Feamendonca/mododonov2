@@ -39,7 +39,7 @@ export const lancamentosRouter = router({
       await rawQuery(
         `INSERT INTO caixa_diario (storeId, data, dinheiro, debito, credito, vale, pix, apps, atendimentos, createdBy, createdAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE dinheiro=VALUES(dinheiro), debito=VALUES(debito), credito=VALUES(credito),
+         ON CONFLICT (storeId, data) DO UPDATE SET dinheiro=VALUES(dinheiro), debito=VALUES(debito), credito=VALUES(credito),
            vale=VALUES(vale), pix=VALUES(pix), apps=VALUES(apps), atendimentos=VALUES(atendimentos), updatedAt=?`,
         [input.storeId, input.data, input.dinheiro, input.debito, input.credito,
          input.vale, input.pix, input.apps, input.atendimentos, ctx.user.id, now, now]

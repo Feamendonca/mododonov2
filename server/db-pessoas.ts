@@ -141,7 +141,7 @@ export async function upsertStorePeopleConfig(
   await (db as any).$client.promise().execute(
     `INSERT INTO store_people_config (storeId, ${fields.join(", ")})
      VALUES (?, ${fields.map(() => "?").join(", ")})
-     ON DUPLICATE KEY UPDATE ${setClause}`,
+     ON CONFLICT (storeId) DO UPDATE SET ${setClause}`,
     [storeId, ...values, ...values]
   );
 }
@@ -427,7 +427,7 @@ export async function upsertHourlyRevenue(
   const values = entries.flatMap(e => [storeId, date, e.hour, e.revenue]);
   await (db as any).$client.promise().execute(
     `INSERT INTO hourly_revenue (storeId, revenueDate, hour, revenue) VALUES ${placeholders}
-     ON DUPLICATE KEY UPDATE revenue = VALUES(revenue)`,
+     ON CONFLICT (storeId, revenueDate, hour) DO UPDATE SET revenue = VALUES(revenue), updatedAt = NOW()`,
     values
   );
 }

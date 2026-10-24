@@ -25,7 +25,7 @@ async function upsertHistorico(
     INSERT INTO dre_historico_mensal
       (store_id, ano_mes, faturamento, cmv, folha, custos_fixos, custos_variaveis, impostos, ebitda, fonte, createdAt, updatedAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
+    ON CONFLICT (store_id, ano_mes) DO UPDATE SET
       faturamento = VALUES(faturamento), cmv = VALUES(cmv), folha = VALUES(folha),
       custos_fixos = VALUES(custos_fixos), custos_variaveis = VALUES(custos_variaveis),
       impostos = VALUES(impostos), ebitda = VALUES(ebitda),
@@ -167,7 +167,7 @@ export const adminHistoricoRouter = router({
           -- n_lojas < 5 = amostra preliminar (rótulo honesto para piloto)
           INSERT INTO benchmarks_agregados (segmento, ano_mes, metrica, p25, mediana, p75, n_lojas, gerado_em)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE p25=VALUES(p25), mediana=VALUES(mediana), p75=VALUES(p75), n_lojas=VALUES(n_lojas), gerado_em=VALUES(gerado_em)
+          ON CONFLICT (segmento, ano_mes, metrica) DO UPDATE SET p25=VALUES(p25), mediana=VALUES(mediana), p75=VALUES(p75), n_lojas=VALUES(n_lojas), gerado_em=VALUES(gerado_em)
         `, [segmento, anoMes, metrica, p25, mediana, p75, n, now]);
         relatorio.push(`  [GRAVADO] ${segmento}/${metrica}: n=${n}, mediana=${(mediana * 100).toFixed(1)}%`);
         gravados++;

@@ -96,7 +96,7 @@ export async function syncGoogleRating(
   await (db as any).$client.promise().execute(
     `INSERT INTO google_ratings (storeId, period, rating, totalRatings, nota, fetchedAt)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
+     ON CONFLICT (storeId, period) DO UPDATE SET
        rating = VALUES(rating),
        totalRatings = VALUES(totalRatings),
        nota = VALUES(nota),
@@ -108,7 +108,7 @@ export async function syncGoogleRating(
   await (db as any).$client.promise().execute(
     `INSERT INTO monthly_quality (storeId, period, qualityGoogle, createdAt)
      VALUES (?, ?, ?, NOW())
-     ON DUPLICATE KEY UPDATE qualityGoogle = VALUES(qualityGoogle)`,
+     ON CONFLICT (storeId, period) DO UPDATE SET qualityGoogle = VALUES(qualityGoogle), updatedAt = NOW()`,
     [storeId, period, String(nota)]
   );
   console.log(`[google-places] storeId=${storeId} period=${period} rating=${rating} nota=${nota}`);

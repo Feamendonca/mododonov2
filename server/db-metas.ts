@@ -237,7 +237,7 @@ export async function upsertProgresso(data: {
   await exec(
     `INSERT INTO medidas_progresso (medida_id, mes, ano, valor_atual, atingida, observacao, updated_at)
      VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE valor_atual=VALUES(valor_atual), atingida=VALUES(atingida), observacao=VALUES(observacao), updated_at=VALUES(updated_at)`,
+     ON CONFLICT (medida_id, mes, ano) DO UPDATE SET valor_atual=VALUES(valor_atual), atingida=VALUES(atingida), observacao=VALUES(observacao), updated_at=VALUES(updated_at)`,
     [data.medidaId, data.mes, data.ano, data.valorAtual, data.atingida ? 1 : 0, data.observacao ?? null, now]
   );
 }
