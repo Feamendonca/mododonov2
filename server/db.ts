@@ -121,6 +121,22 @@ export function translateMySqlToPg(input: string): string {
   out = out.replace(/\bIFNULL\s*\(/gi, "COALESCE(");
   out = out.replace(/\bCURDATE\s*\(\s*\)/gi, "CURRENT_DATE");
   out = out.replace(/\bUNIX_TIMESTAMP\s*\(\s*\)/gi, "extract(epoch from now())");
+  // DATE_FORMAT(expr, '%Y-%m-%d') → to_char((expr)::date, 'YYYY-MM-DD').
+  // Colunas de data neste app são varchar 'YYYY-MM-DD' ou date; o ::date cobre ambos.
+  out = out.replace(/\bDATE_FORMAT\s*\(\s*([^,]+?)\s*,\s*'([^']+)'\s*\)/gi, (_m, expr, fmt) => {
+    const pgFmt = String(fmt)
+      .replace(/%Y/g, "YYYY").replace(/%m/g, "MM").replace(/%d/g, "DD")
+      .replace(/%H/g, "HH24").replace(/%i/g, "MI").replace(/%s/g, "SS");
+    return `to_char((${expr})::date, '${pgFmt}')`;
+  });
+  // DATE_SUB(X, INTERVAL n DAY) → (X - INTERVAL 'n day') (apenas n literal)
+  out = out.replace(/\bDATE_SUB\s*\(\s*([^,]+?)\s*,\s*INTERVAL\s+(\d+)\s+DAY\s*\)/gi, "($1 - INTERVAL '$2 day')");
+  // INSERT IGNORE INTO → INSERT INTO ... ON CONFLICT DO NOTHING
+  let insertIgnore = false;
+  if (/\bINSERT\s+IGNORE\s+INTO\b/i.test(out)) {
+    insertIgnore = true;
+    out = out.replace(/\bINSERT\s+IGNORE\s+INTO\b/gi, "INSERT INTO");
+  }
   // Upsert MySQL→Postgres: no bloco após ON CONFLICT, VALUES(col) → EXCLUDED.col.
   // Os sites de código trocam `ON DUPLICATE KEY UPDATE` por `ON CONFLICT (...) DO
   // UPDATE SET` e mantêm `VALUES(col)` — convertido aqui de forma segura (a cláusula
@@ -130,6 +146,11 @@ export function translateMySqlToPg(input: string): string {
     const head = out.slice(0, ccIdx);
     const tail = out.slice(ccIdx).replace(/\bVALUES\s*\(\s*("[^"]+"|[A-Za-z0-9_]+)\s*\)/gi, "EXCLUDED.$1");
     out = head + tail;
+  }
+  // INSERT IGNORE sem ON CONFLICT explícito → anexa DO NOTHING (ignora qualquer
+  // violação de chave única), equivalente ao IGNORE do MySQL.
+  if (insertIgnore && !/ON\s+CONFLICT/i.test(out)) {
+    out = out.replace(/;?\s*$/, "") + " ON CONFLICT DO NOTHING";
   }
   return out;
 }
