@@ -670,7 +670,7 @@ Retorne um JSON com a estrutura exata solicitada. Linhas em branco ou sem valor 
             if (attemptA === MAX_RETRIES_A) {
               console.log(`[simularPorMeta] Est\u00e1gio A: tentando modelo alternativo...`);
               try {
-                const respFb = await invokeLLM({ model: "gemini-2.5-flash", messages: dreMessages, response_format: dreSchema });
+                const respFb = await invokeLLM({ model: MODEL_DEEP, messages: dreMessages, response_format: dreSchema });
                 const cFb = respFb.choices?.[0]?.message?.content;
                 if (cFb) {
                   const parsedFb = typeof cFb === "string" ? JSON.parse(cFb) : cFb;

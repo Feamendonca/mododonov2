@@ -7,4 +7,8 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // IA (Claude/Anthropic) — usado por server/_core/llm.ts. Os campos forgeApiUrl/forgeApiKey
+  // acima continuam em uso por outros módulos (storage, maps, heartbeat, notification,
+  // imageGeneration, voiceTranscription) e não devem ser removidos.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
 };
