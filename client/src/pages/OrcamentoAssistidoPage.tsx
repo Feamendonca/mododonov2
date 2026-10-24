@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useStore } from "@/components/AppLayout";
-import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -426,7 +425,7 @@ export function OrcamentoAssistidoFlow({
             importe a DRE histórica e a IA mostra o caminho para chegar lá.
           </p>
         </div>
-        <Button size="lg" className="w-full" onClick={() => (window.location.href = getLoginUrl())}>
+        <Button size="lg" className="w-full" onClick={() => (window.location.href = "/")}>
           Fazer login para continuar
         </Button>
       </div>

@@ -3,7 +3,6 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -39,14 +38,13 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Trust the Manus reverse proxy so req.protocol reflects HTTPS correctly.
+  // Trust the reverse proxy (Vercel/Supabase) so req.protocol reflects HTTPS correctly.
   // This is required for secure cookies to work behind the proxy.
   app.set("trust proxy", 1);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
-  registerOAuthRoutes(app);
   // ─── Scheduled / Heartbeat handlers ──────────────────────────────────────
   // MUST be registered before the Vite/static fallthrough
   app.post("/api/scheduled/preturno-check", preturnoCheckHandler);

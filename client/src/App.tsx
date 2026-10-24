@@ -31,7 +31,6 @@ import DemoLayout from "./components/DemoLayout";
 import DemoHojePage from "./pages/demo/DemoHojePage";
 import DemoPlaceholderPage from "./pages/demo/DemoPlaceholderPage";
 import { useAuth } from "./_core/hooks/useAuth";
-import { getLoginUrl } from "./const";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -46,7 +45,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) {
-    return <LoginPage loginUrl={getLoginUrl()} />;
+    return <LoginPage />;
   }
   return <>{children}</>;
 }
@@ -64,7 +63,7 @@ function AdminGate({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) {
-    return <LoginPage loginUrl={getLoginUrl()} />;
+    return <LoginPage />;
   }
   if ((user as any)?.role !== 'admin') {
     return (

@@ -240,6 +240,24 @@ export async function getUserByOpenId(openId: string): Promise<User | undefined>
   return result[0];
 }
 
+/**
+ * Busca o usuário local pelo e-mail — usado pelo auth via Supabase
+ * (server/_core/context.ts): o token do Supabase é verificado e o e-mail
+ * dele é usado para encontrar a linha correspondente em `users`.
+ * Case-insensitive (e-mails são normalizados para lowercase na comparação).
+ */
+export async function getUserByEmail(email: string): Promise<User | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const normalized = email.trim().toLowerCase();
+  const result = await db
+    .select()
+    .from(users)
+    .where(sql`lower(${users.email}) = ${normalized}`)
+    .limit(1);
+  return result[0];
+}
+
 // ─── Stores ───────────────────────────────────────────────────────────────────
 export async function getAllStores(): Promise<Store[]> {
   const db = await getDb();

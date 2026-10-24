@@ -25,7 +25,7 @@ function isLocalhost(req: Request) {
 export function getSessionCookieOptions(
   req: Request
 ): Pick<CookieOptions, "domain" | "httpOnly" | "path" | "sameSite" | "secure"> {
-  // When running behind the Manus proxy (production/preview), always use
+  // When running behind a reverse proxy (production/preview), always use
   // secure + sameSite=none so the cookie is accepted cross-origin.
   // On localhost (dev), sameSite=lax and secure=false is fine.
   const secure = isLocalhost(req) ? isSecureRequest(req) : true;

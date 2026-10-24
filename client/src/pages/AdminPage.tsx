@@ -201,9 +201,14 @@ function CreateUserModal({ stores, role, onClose, onSaved }: { stores: StoreData
         <div className="space-y-4 py-2">
           <div><Label>Nome completo *</Label><Input value={form.displayName} onChange={e => setForm(f => ({ ...f, displayName: e.target.value }))} placeholder="Ex: João Silva" /></div>
           <div>
-            <Label>OpenID Manus *</Label>
-            <Input value={form.openId} onChange={e => setForm(f => ({ ...f, openId: e.target.value }))} placeholder="ID da conta Manus do usuário" />
-            <p style={{ fontSize: 11, color: "var(--stone)", marginTop: 4 }}>O usuário encontra seu OpenID em Configurações → Conta no Manus.</p>
+            <Label>Identificador do usuário *</Label>
+            <Input value={form.openId} onChange={e => setForm(f => ({ ...f, openId: e.target.value }))} placeholder="Identificador único do usuário" />
+            <p style={{ fontSize: 11, color: "var(--stone)", marginTop: 4 }}>
+              Atenção: este cadastro ainda não está integrado ao Supabase Auth — o login via Supabase
+              busca o usuário local pelo e-mail (coluna <code>users.email</code>), não por este campo.
+              Para usuários criados aqui conseguirem logar, será preciso também criar a conta deles no
+              Supabase e alinhar o e-mail (ver scripts/create-admin.ts).
+            </p>
           </div>
           <div>
             <Label>{role === "gerente" ? "Loja(s) vinculada(s)" : "Lojas sob responsabilidade"}</Label>

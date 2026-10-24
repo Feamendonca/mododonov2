@@ -1,8 +1,44 @@
+import { useState } from "react";
 import { useLocation } from "wouter";
-import { Eye } from "lucide-react";
+import { Eye, Loader2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { trpc } from "@/lib/trpc";
 
-export default function LoginPage({ loginUrl }: { loginUrl: string }) {
+export default function LoginPage() {
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim() || !password) {
+      setError("Informe e-mail e senha.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (signInError) {
+        setError("E-mail ou senha incorretos.");
+        return;
+      }
+      // Re-busca auth.me agora que o access_token do Supabase está disponível
+      // (o header Authorization é montado a partir da sessão do Supabase — ver main.tsx).
+      await utils.auth.me.invalidate();
+    } catch (err: any) {
+      setError(err?.message ?? "Erro ao fazer login.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex" style={{ background: "var(--ivory)" }}>
@@ -51,16 +87,50 @@ export default function LoginPage({ loginUrl }: { loginUrl: string }) {
             Faça login para acessar o painel de gestão da sua loja.
           </p>
 
-          {/* Primary login button */}
-          <a
-            href={loginUrl}
-            className="flex items-center justify-center gap-3 w-full py-3.5 px-6 rounded-xl font-semibold text-sm transition-all"
-            style={{ background: "var(--vinho)", color: "var(--white)", textDecoration: "none" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--vinho-hover)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "var(--vinho)")}
-          >
-            Entrar com Manus
-          </a>
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <label htmlFor="login-email" className="block mb-1" style={{ fontSize: 12, color: "var(--stone)" }}>E-mail</label>
+              <input
+                id="login-email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="voce@amfoods.com.br"
+                className="w-full py-2.5 px-3 rounded-lg text-sm outline-none"
+                style={{ border: "1.5px solid var(--silk)", background: "var(--white)", color: "var(--ink)" }}
+              />
+            </div>
+            <div>
+              <label htmlFor="login-password" className="block mb-1" style={{ fontSize: 12, color: "var(--stone)" }}>Senha</label>
+              <input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full py-2.5 px-3 rounded-lg text-sm outline-none"
+                style={{ border: "1.5px solid var(--silk)", background: "var(--white)", color: "var(--ink)" }}
+              />
+            </div>
+
+            {error && (
+              <p style={{ fontSize: 13, color: "var(--vinho)" }}>{error}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex items-center justify-center gap-3 w-full py-3.5 px-6 rounded-xl font-semibold text-sm transition-all"
+              style={{ background: "var(--vinho)", color: "var(--white)", opacity: loading ? 0.7 : 1, cursor: loading ? "wait" : "pointer" }}
+              onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = "var(--vinho-hover)"; }}
+              onMouseLeave={(e) => { if (!loading) e.currentTarget.style.background = "var(--vinho)"; }}
+            >
+              {loading ? <Loader2 size={15} className="animate-spin" /> : null}
+              Entrar
+            </button>
+          </form>
 
           {/* Demo mode separator */}
           <div className="flex items-center gap-3 my-5">
