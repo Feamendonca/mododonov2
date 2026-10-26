@@ -24,7 +24,8 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   // IA (Claude/Anthropic) — usado por server/_core/llm.ts. Os campos forgeApiUrl/forgeApiKey
-  // acima continuam em uso por outros módulos (storage, maps, heartbeat, notification,
-  // imageGeneration, voiceTranscription) e não devem ser removidos.
+  // acima continuam em uso por outros módulos (maps, heartbeat, notification,
+  // imageGeneration[geração de imagem], voiceTranscription) e não devem ser removidos.
+  // OBS: server/storage.ts NÃO usa mais forge — foi migrado para Supabase Storage.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
 };

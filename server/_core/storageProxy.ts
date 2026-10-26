@@ -1,6 +1,13 @@
 import type { Express } from "express";
 import { ENV } from "./env";
+import { storageGetSignedUrl } from "../storage";
 
+// Mantém a rota `/manus-storage/{key}` (nome herdado do Manus) para não
+// quebrar os `url` já persistidos no banco (ex.: tabela de anexos) nem os
+// chamadores no client que usam esse path como <img src> / <a href>.
+// Por baixo, agora gera uma URL assinada do Supabase Storage na hora e
+// redireciona (307) — o bucket é privado, então nunca existe URL pública
+// permanente.
 export function registerStorageProxy(app: Express) {
   app.get("/manus-storage/*", async (req, res) => {
     const key = (req.params as Record<string, string>)[0];
@@ -9,30 +16,13 @@ export function registerStorageProxy(app: Express) {
       return;
     }
 
-    if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
+    if (!ENV.supabaseUrl || !ENV.supabaseServiceRoleKey) {
       res.status(500).send("Storage proxy not configured");
       return;
     }
 
     try {
-      const forgeUrl = new URL(
-        "v1/storage/presign/get",
-        ENV.forgeApiUrl.replace(/\/+$/, "") + "/",
-      );
-      forgeUrl.searchParams.set("path", key);
-
-      const forgeResp = await fetch(forgeUrl, {
-        headers: { Authorization: `Bearer ${ENV.forgeApiKey}` },
-      });
-
-      if (!forgeResp.ok) {
-        const body = await forgeResp.text().catch(() => "");
-        console.error(`[StorageProxy] forge error: ${forgeResp.status} ${body}`);
-        res.status(502).send("Storage backend error");
-        return;
-      }
-
-      const { url } = (await forgeResp.json()) as { url: string };
+      const url = await storageGetSignedUrl(key);
       if (!url) {
         res.status(502).send("Empty signed URL from backend");
         return;
