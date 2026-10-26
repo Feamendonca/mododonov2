@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/contagem-check
+ * Scheduled handler: /api/scheduled/contagem-check
  *
  * Runs weekly on Monday at 15:00 UTC (12:00 BRT).
  * Checks every active store to see if stock count is recent (within CONTAGEM_LIMIAR_DIAS).
@@ -9,7 +9,6 @@
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner, notifyManager } from "../_core/notification";
 import { getAllStores, getStockCounts } from "../db";
 import { getDb } from "../db";
@@ -37,11 +36,6 @@ function getThisWeekMondayBRT(): string {
 
 export async function contagemCheckHandler(req: Request, res: Response) {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const todayBRT = getTodayBRT();
     const weekKey = getThisWeekMondayBRT();
 

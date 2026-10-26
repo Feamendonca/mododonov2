@@ -39,10 +39,6 @@ vi.mock("../db-metas", () => ({
   listMedidas: vi.fn(),
 }));
 
-vi.mock("../_core/sdk", () => ({
-  sdk: { authenticateRequest: vi.fn().mockResolvedValue({ isCron: true, taskUid: "test-uid" }) },
-}));
-
 import { notifyManager, notifyOwner } from "../_core/notification";
 import { getAllStores, getDailyEntry, getActionPlans, getCommitment, getDb } from "../db";
 import { listMetas, listMedidas } from "../db-metas";

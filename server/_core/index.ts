@@ -7,12 +7,6 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { preturnoCheckHandler } from "../scheduled/preturno-check";
-import { lancamentoCheckHandler } from "../scheduled/lancamento-check";
-import { contagemCheckHandler } from "../scheduled/contagem-check";
-import { ocorrenciaCheckHandler } from "../scheduled/ocorrencia-check";
-import { cadenciaSemanalHandler } from "../scheduled/cadencia-semanal";
-import { reuniaoMigHandler } from "../scheduled/reuniao-mig";
 import { registerScheduledCrons } from "./register-crons";
 import { seedTrilhasData } from "../seed-trilhas-data";
 
@@ -45,17 +39,11 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
-  // ─── Scheduled / Heartbeat handlers ──────────────────────────────────────
-  // MUST be registered before the Vite/static fallthrough
-  app.post("/api/scheduled/preturno-check", preturnoCheckHandler);
-  app.post("/api/scheduled/lancamento-check", lancamentoCheckHandler);
-  app.post("/api/scheduled/contagem-check", contagemCheckHandler);
-  app.post("/api/scheduled/ocorrencia-check", ocorrenciaCheckHandler);
-  app.post("/api/scheduled/cadencia-semanal", cadenciaSemanalHandler);
-  app.post("/api/scheduled/google-rating-sync", (req, res) => {
-  import("../scheduled/google-rating-sync").then(m => m.googleRatingSyncHandler(req, res));
-});
-app.post("/api/scheduled/reuniao-mig", reuniaoMigHandler);
+  // ─── Scheduled tasks ──────────────────────────────────────────────────────
+  // Os handlers em server/scheduled/* não são mais expostos como rotas HTTP
+  // (isso dependia do callback assinado do Forge/heartbeat). Agora são
+  // chamados internamente pelo node-cron — ver registerScheduledCrons() logo
+  // abaixo, no boot do servidor.
 
   // One-time seed endpoint for trilhas (idempotent — skips if already seeded)
   app.post("/api/internal/seed-trilhas", async (_req, res) => {
@@ -65,22 +53,6 @@ app.post("/api/scheduled/reuniao-mig", reuniaoMigHandler);
     } catch (err: any) {
       console.error("[seed-trilhas] Error:", err);
       res.status(500).json({ error: err?.message ?? "Seed failed", stack: err?.stack });
-    }
-  });
-
-  // Setup crons — registers the 6 heartbeat jobs (idempotent: skips existing).
-  // POST /api/internal/setup-crons — manual trigger / fallback.
-  // The server also calls registerScheduledCrons() automatically on boot (see below).
-  app.post("/api/internal/setup-crons", async (req, res) => {
-    try {
-      const { parse: parseCookies } = await import("cookie");
-      const cookies = parseCookies(req.headers.cookie ?? "");
-      const userSession = cookies["app_session_id"] ?? "";
-      const results = await registerScheduledCrons(userSession);
-      res.json({ ok: true, results });
-    } catch (err: any) {
-      console.error("[setup-crons] Error:", err);
-      res.status(500).json({ error: err?.message ?? "Setup failed" });
     }
   });
 
@@ -110,22 +82,14 @@ app.post("/api/scheduled/reuniao-mig", reuniaoMigHandler);
     console.log(`Server running on http://localhost:${port}/`);
   });
 
-  // ─── Auto-register crons on boot ────────────────────────────────────────
-  // Non-blocking: errors are logged but never crash the server.
-  // Uses empty session → falls back to project owner identity.
-  registerScheduledCrons("").then((results) => {
-    const created = results.filter(r => r.status === "created").length;
-    const skipped = results.filter(r => r.status === "skipped").length;
-    const errors  = results.filter(r => r.status === "error").length;
-    console.log(`[crons] Boot registration: ${created} created, ${skipped} skipped, ${errors} errors`);
-    if (errors > 0) {
-      results.filter(r => r.status === "error").forEach(r =>
-        console.warn(`[crons] ${r.name}: ${r.detail}`)
-      );
-    }
-  }).catch((err) => {
-    console.error("[crons] Boot registration failed (non-fatal):", err?.message ?? err);
-  });
+  // ─── Scheduled tasks (node-cron) ────────────────────────────────────────
+  // Gated por CRONS_ENABLED (default false — Fase A). Nunca derruba o boot:
+  // se CRONS_ENABLED != "true", apenas loga e não agenda nada.
+  try {
+    registerScheduledCrons();
+  } catch (err: any) {
+    console.error("[crons] Falha ao registrar crons (não-fatal):", err?.message ?? err);
+  }
 }
 
 startServer().catch(console.error);

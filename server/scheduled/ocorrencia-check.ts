@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/ocorrencia-check
+ * Scheduled handler: /api/scheduled/ocorrencia-check
  *
  * Runs daily at 12:00 UTC (09:00 BRT).
  * Checks every active store for unresolved customer occurrences (complaints)
@@ -10,7 +10,6 @@
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner, notifyManager } from "../_core/notification";
 import { getAllStores } from "../db";
 import { getDb } from "../db";
@@ -26,11 +25,6 @@ function getTodayBRT(): string {
 
 export async function ocorrenciaCheckHandler(req: Request, res: Response) {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const todayBRT = getTodayBRT();
 
     // Idempotency: check if we already ran for today

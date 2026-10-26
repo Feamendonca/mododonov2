@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/preturno-check
+ * Scheduled handler: /api/scheduled/preturno-check
  *
  * Runs daily (configured via manus-heartbeat CLI after deploy).
  * Checks every active store to see if today's pré-turno was registered.
@@ -8,19 +8,12 @@
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner, notifyManager } from "../_core/notification";
 import { getAllStores } from "../db";
 import { getPreturnoConfigs, getAtasToday } from "../db-preturno";
 
 export async function preturnoCheckHandler(req: Request, res: Response) {
   try {
-    // Authenticate — only cron calls are allowed
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const today = new Date();
     const todayDow = today.getDay(); // 0=sun … 6=sat
     const todayStr = today.toISOString().split("T")[0];

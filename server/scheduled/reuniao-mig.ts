@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/reuniao-mig
+ * Scheduled handler: /api/scheduled/reuniao-mig
  *
  * Runs every Monday at 09:00 UTC (06:00 BRT) — antes da reunião MIG da semana.
  * Para cada loja ativa, envia ao GERENTE e ao DONO uma pauta guiada com:
@@ -9,13 +9,11 @@
  *
  * Idempotente: não notifica 2x na mesma semana (chave = segunda-feira BRT).
  *
- * NOTA: Para ativar este cron na plataforma, após o deploy execute:
- *   manus-heartbeat create --name "reuniao-mig" --cron "0 0 9 * * 1" --path /api/scheduled/reuniao-mig
- * Cron expression: "0 0 9 * * 1" = toda segunda às 09:00 UTC (06:00 BRT)
+ * Disparado internamente por node-cron (ver server/_core/register-crons.ts) —
+ * agendamento: "0 9 * * 1" = toda segunda às 09:00 UTC (06:00 BRT).
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner, notifyManager } from "../_core/notification";
 import { getAllStores, getActionPlans, getCommitment } from "../db";
 import { getDb } from "../db";
@@ -49,11 +47,6 @@ function fmt(n: number) {
 
 export async function reuniaoMigHandler(req: Request, res: Response) {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const weekKey = getThisWeekMondayBRT();
     const period = getCurrentPeriod();
     const [year, month] = period.split("-").map(Number);

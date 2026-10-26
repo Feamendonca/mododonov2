@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/cadencia-semanal
+ * Scheduled handler: /api/scheduled/cadencia-semanal
  *
  * Runs weekly on Monday at 11:00 UTC (08:00 BRT).
  * Calculates the Cadência Index for each store over the past 7 days and
@@ -12,7 +12,6 @@
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner } from "../_core/notification";
 import { getAllStores, getDailyEntries, getStockCounts } from "../db";
 import { getDb } from "../db";
@@ -161,11 +160,6 @@ function fmtDate(d: string): string {
 
 export async function cadenciaSemanalHandler(req: Request, res: Response) {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const weekKey = getThisWeekMondayBRT();
     const todayBRT = getTodayBRT();
     const sevenDaysAgo = daysAgoBRT(7);

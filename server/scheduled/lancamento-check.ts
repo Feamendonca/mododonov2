@@ -1,5 +1,5 @@
 /**
- * Heartbeat handler: /api/scheduled/lancamento-check
+ * Scheduled handler: /api/scheduled/lancamento-check
  *
  * Runs daily at 14:00 UTC (11:00 BRT).
  * Checks every active store to see if YESTERDAY's daily entry was registered.
@@ -10,7 +10,6 @@
  */
 
 import type { Request, Response } from "express";
-import { sdk } from "../_core/sdk";
 import { notifyOwner, notifyManager } from "../_core/notification";
 import { getAllStores, getDailyEntry } from "../db";
 import { getDb } from "../db";
@@ -35,11 +34,6 @@ function getTodayBRT(): string {
 
 export async function lancamentoCheckHandler(req: Request, res: Response) {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (!user.isCron) {
-      return res.status(403).json({ error: "cron-only" });
-    }
-
     const todayBRT = getTodayBRT();
     const yesterdayBRT = getYesterdayBRT();
 
