@@ -155,12 +155,52 @@ export function translateMySqlToPg(input: string): string {
   return out;
 }
 
+/** Código Postgres para "relation does not exist" (tabela/view ausente). */
+const PG_UNDEFINED_TABLE = "42P01";
+
+/**
+ * FASE A (port off-Manus): ~24 tabelas de detalhe de módulos (preturno_*,
+ * checklist_*, trilha_*, manutencoes, orcamento_colaboradores/premissas/
+ * valores/linhas_custom/metas_diarias, products/product_categories,
+ * reviews/council_cases/service_standards/training_sessions, dre_fechamentos/
+ * dre_template_linhas, supervisor_stores, network_defaults, remuneracao_
+ * apuracao_regras, plano_acao_anexos, ...) ainda NÃO existem no banco novo —
+ * só existiam no Manus. Serão recriadas uma a uma na Fase B.
+ *
+ * Até lá, qualquer SQL cru que bata numa tabela ausente lançaria
+ * "relation ... does not exist" (42P01) e derrubaria a página/mutation pro
+ * gerente. Em vez disso, tratamos esse erro específico como "sem dados ainda"
+ * (SELECT) ou "no-op" (INSERT/UPDATE/DELETE) — todo o resto (erro de sintaxe,
+ * de conexão, violação de constraint etc.) continua propagando normalmente.
+ * Isso é resiliência, não mudança de regra de negócio: o núcleo (ex.:
+ * getOrcamentoVigente → getColaboradores, stores.list → supervisor_stores)
+ * passa a degradar graciosamente em vez de quebrar. Reavaliar/remover esta
+ * rede de segurança quando as tabelas da Fase B existirem.
+ */
+function isMissingRelationError(err: unknown): boolean {
+  return !!err && typeof err === "object" && (err as any).code === PG_UNDEFINED_TABLE;
+}
+
 /** Executa SQL cru no pool pg aplicando a tradução de dialeto. Retorna no formato
  * mysql2 `[rows, fields]` para compatibilidade com o código existente. Para INSERT
  * com `RETURNING id`, anexa `insertId`/`affectedRows` ao array de linhas. */
 async function runRaw(poolClient: Pool, rawSql: string, params: unknown[] = []): Promise<[any[], unknown]> {
   const text = translateMySqlToPg(rawSql);
-  const res = await poolClient.query(text, params);
+  let res;
+  try {
+    res = await poolClient.query(text, params);
+  } catch (err) {
+    if (isMissingRelationError(err)) {
+      // Fase A — reativar o módulo (remover este fallback deixa de ser
+      // necessário) assim que a tabela da Fase B existir.
+      console.warn("[Fase A] Tabela ainda não portada — retornando vazio:", (err as any).message);
+      const empty: any[] = [];
+      (empty as any).insertId = 0;
+      (empty as any).affectedRows = 0;
+      return [empty, undefined];
+    }
+    throw err;
+  }
   const rows = res.rows as any[];
   // Compat mysql2 ResultSetHeader: insertId / affectedRows
   (rows as any).insertId = rows.length > 0 && rows[0] && "id" in rows[0] ? rows[0].id : 0;

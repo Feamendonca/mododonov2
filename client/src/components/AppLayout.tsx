@@ -9,6 +9,7 @@ import {
   Target, DollarSign, ClipboardCheck
 } from "lucide-react";
 import { ClipboardList, Handshake } from "lucide-react";
+import { isModuleHidden } from "@/config/hiddenModules";
 
 // ─── Store Context ────────────────────────────────────────────────────────────
 interface StoreCtx {
@@ -95,6 +96,20 @@ const SUPERVISOR_SECTIONS: NavSection[] = [
   },
 ];
 
+/**
+ * FASE A — remove do menu os itens cujo módulo está oculto (ver
+ * client/src/config/hiddenModules.ts). Seções que ficam sem nenhum item
+ * visível somem inteiras (ex.: "4. Cadência" perde Pré-turno/Checklist/
+ * Trilhas, mas continua existindo por causa de Plano de Ação/Reunião/
+ * Compromisso). Reativar um módulo na Fase B é só tirar o path do Set —
+ * nenhuma mudança aqui é necessária.
+ */
+function filterHiddenSections(sections: NavSection[]): NavSection[] {
+  return sections
+    .map((s) => ({ ...s, items: s.items.filter((item) => !isModuleHidden(item.path)) }))
+    .filter((s) => s.items.length > 0);
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const { user, logout } = useAuth();
@@ -136,11 +151,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     setStoreDropOpen(false);
   };
   const currentStore = stores.find((s) => s.id === storeId);
-  const allSections: NavSection[] = user?.role === "admin"
-    ? [...NAV_SECTIONS, ...ADMIN_SECTIONS]
-    : user?.role === "supervisor"
-    ? [...NAV_SECTIONS, ...SUPERVISOR_SECTIONS]
-    : NAV_SECTIONS;
+  const allSections: NavSection[] = filterHiddenSections(
+    user?.role === "admin"
+      ? [...NAV_SECTIONS, ...ADMIN_SECTIONS]
+      : user?.role === "supervisor"
+      ? [...NAV_SECTIONS, ...SUPERVISOR_SECTIONS]
+      : NAV_SECTIONS
+  );
 
   return (
     <StoreContext.Provider value={{ storeId, setStoreId, stores }}>

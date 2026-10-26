@@ -25,7 +25,8 @@ export default function RedePage() {
   const { data: networkData, isLoading } = trpc.network.overview.useQuery({ period });
   const { data: stores = [] } = trpc.stores.list.useQuery();
   const isAdmin = user?.role === "admin";
-  const { data: disciplinaData } = trpc.preturno.disciplinaRanking.useQuery(undefined, { enabled: isAdmin });
+  // oculto na Fase A — reativar ao refazer o módulo Pré-turno (preturno_* não existe no banco novo)
+  const { data: disciplinaData } = trpc.preturno.disciplinaRanking.useQuery(undefined, { enabled: false && isAdmin });
 
   if (!isAdmin) {
     return (

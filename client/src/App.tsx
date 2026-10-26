@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import AppLayout from "./components/AppLayout";
 import LoginPage from "./pages/LoginPage";
@@ -27,10 +28,13 @@ import RedePage from "./pages/RedePage";
 import PessoasPage from "./pages/PessoasPage";
 import AdminPage from "./pages/AdminPage";
 import CargaHistoricaPage from "./pages/CargaHistoricaPage";
+import ModuloEmConstrucaoPage from "./pages/ModuloEmConstrucaoPage";
 import DemoLayout from "./components/DemoLayout";
 import DemoHojePage from "./pages/demo/DemoHojePage";
 import DemoPlaceholderPage from "./pages/demo/DemoPlaceholderPage";
 import { useAuth } from "./_core/hooks/useAuth";
+import { isModuleHidden } from "./config/hiddenModules";
+import type { ComponentType } from "react";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -78,85 +82,58 @@ function AdminGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Renderiza a página de uma rota "núcleo" (AuthGate + AppLayout), já
+ * protegida por um RouteErrorBoundary próprio — uma falha de renderização
+ * aqui não derruba o app inteiro, só mostra o placeholder amigável.
+ *
+ * Se `path` estiver em HIDDEN_MODULES (Fase A — ver
+ * client/src/config/hiddenModules.ts), renderiza o placeholder
+ * "em construção" no lugar da página real, SEM precisar comentar a rota ou
+ * o import — basta tirar o path do Set pra reativar na Fase B.
+ */
+function PageRoute({ path, component: PageComponent, titulo }: { path: string; component: ComponentType; titulo?: string }) {
+  return (
+    <AuthGate>
+      <AppLayout>
+        <RouteErrorBoundary>
+          {isModuleHidden(path) ? <ModuloEmConstrucaoPage titulo={titulo} /> : <PageComponent />}
+        </RouteErrorBoundary>
+      </AppLayout>
+    </AuthGate>
+  );
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={() => (
-        <AuthGate>
-          <AppLayout>
-            <HojePage />
-          </AppLayout>
-        </AuthGate>
-      )} />
-      <Route path="/hoje" component={() => (
-        <AuthGate><AppLayout><HojePage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/estoque" component={() => (
-        <AuthGate><AppLayout><EstoquePage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/ebitda" component={() => (
-        <AuthGate><AppLayout><EbitdaPage /></AppLayout></AuthGate>
-      )}
-      />
-      <Route path="/dre-viva" component={() => (
-        <AuthGate><AppLayout><DreVivaPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/lancamentos" component={() => (
-        <AuthGate><AppLayout><LancamentosPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/reuniao" component={() => (
-        <AuthGate><AppLayout><ReuniaoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/plano" component={() => (
-        <AuthGate><AppLayout><PlanoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/compromisso" component={() => (
-        <AuthGate><AppLayout><CompromissoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/experiencia" component={() => (
-        <AuthGate><AppLayout><ExperienciaPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/preturno" component={() => (
-        <AuthGate><AppLayout><PreturnoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/trilhas" component={() => (
-        <AuthGate><AppLayout><TrilhasPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/orcamento/editar/:id" component={() => (
-        <AuthGate><AppLayout><OrcamentoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/orcamento" component={() => (
-        <AuthGate><AppLayout><OrcamentoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/orcamento-assistido" component={() => (
-        <AuthGate><AppLayout><OrcamentoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/manutencoes" component={() => (
-        <AuthGate><AppLayout><ManutencoesPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/meta" component={() => (
-        <AuthGate><AppLayout><MetaPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/remuneracao" component={() => (
-        <AuthGate><AppLayout><RemuneracaoPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/checklist" component={() => (
-        <AuthGate><AppLayout><ChecklistPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/ranking" component={() => (
-        <AuthGate><AppLayout><RankingPage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/rede" component={() => (
-        <AuthGate><AppLayout><RedePage /></AppLayout></AuthGate>
-      )} />
-      <Route path="/pessoas" component={() => (
-        <AuthGate><AppLayout><PessoasPage /></AppLayout></AuthGate>
-      )} />
+      <Route path="/" component={() => <PageRoute path="/hoje" component={HojePage} />} />
+      <Route path="/hoje" component={() => <PageRoute path="/hoje" component={HojePage} />} />
+      <Route path="/estoque" component={() => <PageRoute path="/estoque" component={EstoquePage} titulo="Estoque / CMV" />} />
+      <Route path="/ebitda" component={() => <PageRoute path="/ebitda" component={EbitdaPage} />} />
+      <Route path="/dre-viva" component={() => <PageRoute path="/dre-viva" component={DreVivaPage} />} />
+      <Route path="/lancamentos" component={() => <PageRoute path="/lancamentos" component={LancamentosPage} />} />
+      <Route path="/reuniao" component={() => <PageRoute path="/reuniao" component={ReuniaoPage} />} />
+      <Route path="/plano" component={() => <PageRoute path="/plano" component={PlanoPage} />} />
+      <Route path="/compromisso" component={() => <PageRoute path="/compromisso" component={CompromissoPage} />} />
+      <Route path="/experiencia" component={() => <PageRoute path="/experiencia" component={ExperienciaPage} titulo="Experiência do Cliente" />} />
+      <Route path="/preturno" component={() => <PageRoute path="/preturno" component={PreturnoPage} titulo="Pré-turno" />} />
+      <Route path="/trilhas" component={() => <PageRoute path="/trilhas" component={TrilhasPage} titulo="Trilhas" />} />
+      <Route path="/orcamento/editar/:id" component={() => <PageRoute path="/orcamento/editar/:id" component={OrcamentoPage} titulo="Orçamento" />} />
+      <Route path="/orcamento" component={() => <PageRoute path="/orcamento" component={OrcamentoPage} titulo="Orçamento" />} />
+      <Route path="/orcamento-assistido" component={() => <PageRoute path="/orcamento-assistido" component={OrcamentoPage} titulo="Orçamento Assistido" />} />
+      <Route path="/manutencoes" component={() => <PageRoute path="/manutencoes" component={ManutencoesPage} titulo="Manutenções" />} />
+      <Route path="/meta" component={() => <PageRoute path="/meta" component={MetaPage} />} />
+      <Route path="/remuneracao" component={() => <PageRoute path="/remuneracao" component={RemuneracaoPage} />} />
+      <Route path="/checklist" component={() => <PageRoute path="/checklist" component={ChecklistPage} titulo="Checklist Diário" />} />
+      <Route path="/ranking" component={() => <PageRoute path="/ranking" component={RankingPage} />} />
+      <Route path="/rede" component={() => <PageRoute path="/rede" component={RedePage} />} />
+      <Route path="/pessoas" component={() => <PageRoute path="/pessoas" component={PessoasPage} />} />
       <Route path="/admin" component={() => (
-        <AdminGate><AppLayout><AdminPage /></AppLayout></AdminGate>
+        <AdminGate><AppLayout><RouteErrorBoundary><AdminPage /></RouteErrorBoundary></AppLayout></AdminGate>
       )} />
       <Route path="/admin/carga-historica" component={() => (
-        <AdminGate><AppLayout><CargaHistoricaPage /></AppLayout></AdminGate>
+        <AdminGate><AppLayout><RouteErrorBoundary><CargaHistoricaPage /></RouteErrorBoundary></AppLayout></AdminGate>
       )} />
       {/* Demo routes — no auth required */}
       <Route path="/demo/hoje" component={() => (

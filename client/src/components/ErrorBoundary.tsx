@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { Component, ReactNode } from "react";
 
 interface Props {
@@ -23,30 +23,18 @@ class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      // Último recurso (app inteiro) — nunca mostra stack trace/erro técnico
+      // cru pro gerente. Detalhe fica só no console para debug.
+      // eslint-disable-next-line no-console
+      if (this.state.error) console.error("[ErrorBoundary]", this.state.error);
       return (
         <div className="flex items-center justify-center min-h-screen p-8 bg-background">
-          <div className="flex flex-col items-center w-full max-w-2xl p-8">
-            <AlertTriangle
-              size={48}
-              className="text-destructive mb-6 flex-shrink-0"
-            />
-
-            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
-
-            <h2 className="text-xl mb-2">Ocorreu um erro inesperado.</h2>
-
-            {this.state.error?.message && (
-              <div className="p-3 w-full rounded bg-destructive/10 border border-destructive/30 mb-4">
-                <p className="text-sm font-semibold text-destructive">{this.state.error.message}</p>
-              </div>
-            )}
-
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-xs text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
-
+          <div className="flex flex-col items-center w-full max-w-md p-8 text-center">
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🚧</div>
+            <h2 className="text-xl mb-2">Módulo em construção — em breve</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Não conseguimos carregar o Modo Dono agora. Tente recarregar a página.
+            </p>
             <button
               onClick={() => window.location.reload()}
               className={cn(
@@ -56,7 +44,7 @@ class ErrorBoundary extends Component<Props, State> {
               )}
             >
               <RotateCcw size={16} />
-              Reload Page
+              Recarregar
             </button>
           </div>
         </div>
