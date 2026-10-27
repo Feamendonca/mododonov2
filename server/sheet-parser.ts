@@ -501,13 +501,16 @@ export interface DreExtractResult {
 
 const MESES_REGEX = /\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[\w\/\-]*/i;
 
-function cellToNumberDre(v: unknown): number | null {
+export function cellToNumberDre(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const s = String(v).trim();
   if (s === "-" || s === "—") return 0;
   // Remove símbolo R$ e espaços
   const raw = s.replace(/R\$\s*/g, "").replace(/\s/g, "");
   if (!raw) return null;
+  // "R$ -" (zero formatado pelo F360) — o replace acima já removeu o "R$ ",
+  // sobrando só o traço.
+  if (raw === "-" || raw === "—") return 0;
   // Detectar formato pelo ÚLTIMO separador:
   //   "524,386.78" → último sep é "." e há "," antes → formato US (vírgula=milhar, ponto=decimal)
   //   "524.386,78" → último sep é "," → formato pt-BR (ponto=milhar, vírgula=decimal)
@@ -740,13 +743,17 @@ ${linhas.join("\n")}`;
 // ─── extractDreHistorico ──────────────────────────────────────────────────────
 // Mapeamento de linhas nível-1 do DRE para categorias da tabela dre_historico_mensal.
 // Cada entrada: [regex para a descrição da linha, categoria]
+// Nota: "receita" exige sufixo (bruta|operacional) — SEM incluir "líquida" —
+// porque o F360 tem "1 - Receita Bruta" (nível 1, real) E "3 - Receita Líquida"
+// (nível 1, mas CALCULADA/derivada). Se "líquida" entrasse aqui, as duas linhas
+// seriam somadas na mesma categoria "faturamento", dobrando o valor.
 const CATEGORIA_MAP: [RegExp, keyof DreHistoricoMes][] = [
-  [/receita\s*(bruta|operacional|l[íi]quida)?/i, "faturamento"],
+  [/receita\s*(bruta|operacional)\b/i, "faturamento"],
   [/cmv|custo.*mercadoria|custo.*vend/i, "cmv"],
-  [/folha|salário|pessoal|m[ãa]o.de.obra|encargo|rh\b/i, "folha"],
-  [/imposto|tributo|simples|iss|icms|pis|cofins|taxa\s*cart/i, "impostos"],
-  [/custo.*fix|despesa.*fix|aluguel|condom[íi]nio|energia|[áa]gua|royalt|marketing|contabilidade/i, "custosFixos"],
-  [/custo.*var|despesa.*var|embalagem|delivery|comiss/i, "custosVariaveis"],
+  [/folha|sal[áa]rio|pessoal|colaborador|m[ãa]o.de.obra|encargo|rh\b/i, "folha"],
+  [/imposto|tributo|simples\b|iss\b|icms|pis\b|cofins|taxa\s*cart/i, "impostos"],
+  [/custo.*fix|despesa.*fix|aluguel|condom[íi]nio|energia|[áa]gua|royalt|marketing|contabilidade|ocupa[çc][ãa]o|franquia|terceiro/i, "custosFixos"],
+  [/custo.*var|despesa.*var|embalagem|delivery|comiss|financeir/i, "custosVariaveis"],
   [/ebitda|resultado|lucro\s*operat/i, "ebitda"],
 ];
 
@@ -879,7 +886,7 @@ export function extractDreHistorico(
  * Converte label de mês ("jan/26", "jan-26", "jan 26", "01/26") para "YYYY-MM".
  * Retorna null se não conseguir parsear.
  */
-function parseMesLabel(label: string): string | null {
+export function parseMesLabel(label: string): string | null {
   const MESES_MAP: Record<string, string> = {
     jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06",
     jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12",
