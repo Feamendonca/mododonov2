@@ -21,6 +21,19 @@ import {
 import { getDb } from "../db";
 import { invokeLLM } from "../_core/llm";
 import { TRPCError } from "@trpc/server";
+import {
+  extrairGruposPorMes,
+  proporOrcamento as proporOrcamentoDeterministico,
+  calcularDre,
+} from "../orcamento-proposta";
+import { storageDownload } from "../storage";
+import { upsertOrcamentoRascunho } from "../db-orcamento-v2";
+
+/** Dias de operação padrão usado só para a PRÉVIA de `proporDaDre` (metaDiaria).
+ * Não é um valor financeiro gravado em lugar nenhum — é apenas o divisor usado
+ * para a estimativa de meta diária mostrada na tela de confirmação; o gerente
+ * ajusta/confirma os números reais antes de `salvarRascunho`. */
+const DIAS_OPERACAO_PREVIEW = 30;
 
 const tipoValorSchema = z.enum(["fixo", "percentual"]);
 
@@ -218,6 +231,43 @@ export const orcamentoRouter = router({
   metaDiaria: protectedProcedure
     .input(z.object({ storeId: z.number().int(), data: z.string() }))
     .query(async ({ input }) => getMetaDiaria(input.storeId, input.data)),
+
+  // ── Fluxo propor→confirmar→salvar (Task 4, Fase B) ──────────────────────
+  // A IA/parser PROPÕE (determinístico, sem IA de fato — ver orcamento-proposta.ts)
+  // e NUNCA grava. Só `salvarRascunho` grava, e só os campos que o gerente
+  // confirmou/editou (null continua null; nada de default/benchmark).
+
+  proporDaDre: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      storageKey: z.string(),
+      fileName: z.string(),
+      meses: z.number().int().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      const buf = await storageDownload(input.storageKey);
+      const gruposPorMes = extrairGruposPorMes(buf, input.fileName, undefined, input.meses);
+      const rascunho = proporOrcamentoDeterministico(gruposPorMes);
+      const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
+      return { rascunho, dre };
+    }),
+
+  salvarRascunho: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      periodoInicio: z.string(),
+      campos: z.record(z.string(), z.union([z.number(), z.string(), z.null()])),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      const { id } = await upsertOrcamentoRascunho({
+        storeId: input.storeId,
+        periodoInicio: input.periodoInicio,
+        campos: input.campos,
+      });
+      return { id };
+    }),
 
   // ── Linhas Customizáveis ─────────────────────────────────────────────────
 
