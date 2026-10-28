@@ -886,7 +886,31 @@ export const orcamentos = pgTable("orcamentos", {
   status: varchar("status", { length: 20 }).notNull().default("rascunho"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  // ── Fase B — migration 0029 ──
+  emAtencao: boolean("em_atencao").notNull().default(false),
+  prazoDecisao: varchar("prazo_decisao", { length: 10 }), // YYYY-MM-DD
+  decisao: varchar("decisao", { length: 20 }), // 'seguir' | 'encerrar'
+  rampaMeses: integer("rampa_meses"),
+  // Folha (grupo 7 — Colaboradores). Distinta de pro_labore (grupo 13).
+  folha: numeric("folha", { precision: 14, scale: 2 }),
+  // ── Aprovação (Task 5, Fase B) ──
+  aprovadoPor: integer("aprovado_por"),
+  aprovadoEm: bigint("aprovado_em", { mode: "number" }),
 }, (t) => ({
   uqOrcamentoStorePeriodo: uniqueIndex("uq_orcamento_store_periodo").on(t.storeId, t.periodoInicio),
 }));
 export type OrcamentoRow = typeof orcamentos.$inferSelect;
+
+// ─── Orçamento — Metas Diárias (ritmo intra-mês) — migration 0029 ─────────────
+export const orcamentoMetasDiarias = pgTable("orcamento_metas_diarias", {
+  id: serial("id").primaryKey(),
+  orcamentoId: integer("orcamento_id").notNull(),
+  storeId: integer("store_id").notNull(),
+  data: varchar("data", { length: 10 }).notNull(), // YYYY-MM-DD
+  metaReceita: numeric("meta_receita", { precision: 14, scale: 2 }),
+  metaAtendimentos: integer("meta_atendimentos"),
+  pesoDia: numeric("peso_dia", { precision: 8, scale: 4 }),
+}, (t) => ({
+  uqMetaDiaria: uniqueIndex("uq_meta_diaria").on(t.storeId, t.data),
+}));
+export type OrcamentoMetaDiariaRow = typeof orcamentoMetasDiarias.$inferSelect;

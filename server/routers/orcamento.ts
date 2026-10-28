@@ -8,7 +8,6 @@ import {
   listAllOrcamentos,
   listOrcamentosByStoreIds,
   saveOrcamento,
-  aprovarOrcamento,
   proporOrcamento,
   calcularOrcamento,
   getMetaDiaria,
@@ -21,6 +20,27 @@ import {
 import { getDb } from "../db";
 import { invokeLLM } from "../_core/llm";
 import { TRPCError } from "@trpc/server";
+import {
+  extrairGruposPorMes,
+  proporOrcamento as proporOrcamentoDeterministico,
+  calcularDre,
+  type GrupoDreMes,
+  type RascunhoOrcamento,
+} from "../orcamento-proposta";
+import { gerarSugestaoIA } from "../orcamento-ia";
+import { storageDownload, storageGetPresignedPutUrl } from "../storage";
+import {
+  upsertOrcamentoRascunho,
+  aprovarOrcamento as aprovarOrcamentoRascunho,
+  registrarDecisao as registrarDecisaoOrcamento,
+  getMetasDiarias,
+} from "../db-orcamento-v2";
+
+/** Dias de operação padrão usado só para a PRÉVIA de `proporDaDre` (metaDiaria).
+ * Não é um valor financeiro gravado em lugar nenhum — é apenas o divisor usado
+ * para a estimativa de meta diária mostrada na tela de confirmação; o gerente
+ * ajusta/confirma os números reais antes de `salvarRascunho`. */
+const DIAS_OPERACAO_PREVIEW = 30;
 
 const tipoValorSchema = z.enum(["fixo", "percentual"]);
 
@@ -208,16 +228,133 @@ export const orcamentoRouter = router({
       return { ok: true };
     }),
 
-  aprovar: adminProcedure
-    .input(z.object({ id: z.number().int() }))
-    .mutation(async ({ ctx, input }) => {
-      const result = await aprovarOrcamento(input.id, ctx.user.name ?? ctx.user.openId);
-      return result;
-    }),
-
   metaDiaria: protectedProcedure
     .input(z.object({ storeId: z.number().int(), data: z.string() }))
     .query(async ({ input }) => getMetaDiaria(input.storeId, input.data)),
+
+  // ── Upload da DRE (Task 9, Fase B) ───────────────────────────────────────
+  // URL assinada de upload direto ao Supabase Storage (bypass do backend) —
+  // o cliente faz PUT direto nessa URL e depois chama `proporDaDre` com a
+  // `storageKey` devolvida aqui.
+  getUploadUrl: protectedProcedure
+    .input(z.object({
+      fileName: z.string().min(1),
+      contentType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const ext = input.fileName.split(".").pop()?.toLowerCase() ?? "";
+      const CT_MAP: Record<string, string> = {
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        xlsb: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+        xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+        xls: "application/vnd.ms-excel",
+        csv: "text/csv",
+      };
+      const contentType = input.contentType ?? CT_MAP[ext] ?? "application/octet-stream";
+      const { uploadUrl, key } = await storageGetPresignedPutUrl(
+        `orcamento/${Date.now()}_${input.fileName}`,
+        contentType
+      );
+      return { uploadUrl, storageKey: key };
+    }),
+
+  // ── Fluxo propor→confirmar→salvar (Task 4, Fase B) ──────────────────────
+  // A IA/parser PROPÕE (determinístico, sem IA de fato — ver orcamento-proposta.ts)
+  // e NUNCA grava. Só `salvarRascunho` grava, e só os campos que o gerente
+  // confirmou/editou (null continua null; nada de default/benchmark).
+
+  proporDaDre: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      storageKey: z.string(),
+      fileName: z.string(),
+      meses: z.number().int().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      const buf = await storageDownload(input.storageKey);
+      const gruposPorMes = extrairGruposPorMes(buf, input.fileName, undefined, input.meses);
+      const rascunho = proporOrcamentoDeterministico(gruposPorMes);
+      const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
+      return { rascunho, dre };
+    }),
+
+  // Camada de IA aditiva (Task 8, Fase B): a IA SUGERE ajustes e APONTA
+  // alavancas fracas por cima do rascunho determinístico — ela NÃO lê
+  // planilha (recebe `historico`/`rascunho` já extraídos pelo cliente a
+  // partir de `proporDaDre`) e NÃO grava nada. Fallback silencioso embutido
+  // em `gerarSugestaoIA`: qualquer erro de LLM vira `{sugestoes:{},
+  // alavancasFracas:[]}`, sem lançar — o rascunho determinístico continua
+  // de pé mesmo se a IA cair.
+  sugestaoIA: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      historico: z.array(z.any()),
+      rascunho: z.any(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      return gerarSugestaoIA({
+        historico: input.historico as GrupoDreMes[],
+        rascunho: input.rascunho as RascunhoOrcamento,
+      });
+    }),
+
+  salvarRascunho: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      periodoInicio: z.string(),
+      // z.boolean() cobre `emAtencao` (coluna BOOLEAN) — Task 9: a tela grava
+      // o em-atenção calculado em `proporOrcamento` junto do rascunho.
+      campos: z.record(z.string(), z.union([z.number(), z.string(), z.boolean(), z.null()])),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      const { id } = await upsertOrcamentoRascunho({
+        storeId: input.storeId,
+        periodoInicio: input.periodoInicio,
+        campos: input.campos,
+      });
+      return { id };
+    }),
+
+  // Aprovação do rascunho (Task 5, Fase B): só admin ou supervisor (regional)
+  // aprova — gerente comum NÃO aprova. Usa `protectedProcedure` (não
+  // `adminProcedure`) porque supervisor também é permitido; a checagem de
+  // papel é explícita aqui. NÃO recalcula valores — só muda status/aprovador.
+  aprovarRascunho: protectedProcedure
+    .input(z.object({ orcamentoId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional aprova orçamento" });
+      }
+      return aprovarOrcamentoRascunho(input.orcamentoId, ctx.user.id);
+    }),
+
+  // Decisão seguir/encerrar de loja "em atenção" (Task 7, Fase B): só admin ou
+  // supervisor (regional) decide — gerente comum NÃO decide. Mesmo padrão de
+  // papel de `aprovarRascunho`. NÃO recalcula nada — só grava `decisao`.
+  registrarDecisao: protectedProcedure
+    .input(z.object({
+      orcamentoId: z.number().int(),
+      decisao: z.enum(["seguir", "encerrar"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional decide seguir/encerrar" });
+      }
+      return registrarDecisaoOrcamento(input.orcamentoId, input.decisao);
+    }),
+
+  // Metas diárias (Task 6, Fase B): geradas automaticamente em `aprovarRascunho`
+  // quando o orçamento tem `receitaBruta` definida (distribuição uniforme por
+  // dia do mês). Sem dados → `[]` (loja sem orçamento aprovado não quebra).
+  getMetasDiarias: protectedProcedure
+    .input(z.object({ storeId: z.number().int(), anoMes: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ ctx, input }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      return getMetasDiarias(input.storeId, input.anoMes);
+    }),
 
   // ── Linhas Customizáveis ─────────────────────────────────────────────────
 

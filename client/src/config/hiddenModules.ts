@@ -19,15 +19,10 @@
  * necessária em AppLayout.tsx/App.tsx.
  */
 export const HIDDEN_MODULES = new Set<string>([
-  // orçamento detalhado — orcamento_colaboradores, orcamento_metas_diarias,
-  // orcamento_linhas_custom, orcamento_premissas, orcamento_valores,
-  // dre_template_linhas ausentes. (A leitura do "orçamento vigente" usada
-  // pelo núcleo — dashboard/EBITDA/ranking/rede/DRE Viva — continua
-  // funcionando normalmente via server/db.ts; só a TELA de criar/editar
-  // orçamento é que fica oculta.)
-  "/orcamento",
-  "/orcamento/editar/:id",
-  "/orcamento-assistido",
+  // Orçamento (Fase B) — ATIVO desde 2026-10-28. Reconstruído sobre a tabela
+  // `orcamentos` + `orcamento_metas_diarias` (migration 0029). A tela de
+  // criar/conferir/aprovar orçamento voltou ao menu. O fluxo legado
+  // `/orcamento-assistido` foi aposentado (código removido na reescrita).
 
   // pré-turno — preturno_configs, preturno_temas, preturno_condutores,
   // preturno_atas ausentes.
