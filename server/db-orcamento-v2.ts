@@ -15,12 +15,42 @@
 
 import { rawQuery } from "./db";
 
-/** "receitaBruta" → "receita_bruta". Mapeia 1:1 para os nomes de coluna
- * snake_case de `orcamentos` (drizzle/schema.ts) — todas as colunas de
- * campos de orçamento seguem essa convenção. */
-function camelToSnake(key: string): string {
-  return key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
-}
+/**
+ * Whitelist explícita das chaves que o rascunho pode gravar → nome real da
+ * coluna em `orcamentos` (drizzle/schema.ts). Qualquer chave fora deste mapa é
+ * rejeitada ANTES de montar o SQL (nunca vira erro cru do Postgres por coluna
+ * inexistente). Cobre os campos de `RascunhoOrcamento` + ticketMedio/diasOperacao
+ * (editáveis pelo gerente na tela de confirmação).
+ *
+ * `folha` (grupo 7 — Colaboradores) é coluna própria e distinta de `pro_labore`
+ * (grupo 13). `sanitarismo` e `*_tipo` não entram no rascunho determinístico;
+ * campos derivados/não-operacionais (grupos 2/3/12/14/15) também não.
+ */
+const CAMPO_PARA_COLUNA: Record<string, string> = {
+  receitaBruta: "receita_bruta",
+  ticketMedio: "ticket_medio",
+  diasOperacao: "dias_operacao",
+  cmvPct: "cmv_pct",
+  impostosPct: "impostos_pct",
+  royaltiesPct: "royalties_pct",
+  fundoMarketingPct: "fundo_marketing_pct",
+  taxaCartaoPct: "taxa_cartao_pct",
+  folha: "folha",
+  aluguel: "aluguel",
+  condominio: "condominio",
+  energia: "energia",
+  gas: "gas",
+  agua: "agua",
+  outrosOcupacao: "outros_ocupacao",
+  contabilidade: "contabilidade",
+  sistemas: "sistemas",
+  outrosServicos: "outros_servicos",
+  juros: "juros",
+  tarifasBancarias: "tarifas_bancarias",
+  marketing: "marketing",
+  outrasDespesas: "outras_despesas",
+  proLabore: "pro_labore",
+};
 
 export interface UpsertOrcamentoRascunhoInput {
   storeId: number;
@@ -39,6 +69,15 @@ export async function upsertOrcamentoRascunho(
   input: UpsertOrcamentoRascunhoInput
 ): Promise<{ id: number }> {
   const chaves = Object.keys(input.campos);
+
+  // Valida TODAS as chaves contra o whitelist ANTES de montar qualquer SQL —
+  // chave desconhecida falha claro aqui, nunca vira erro cru do Postgres.
+  for (const chave of chaves) {
+    if (!(chave in CAMPO_PARA_COLUNA)) {
+      throw new Error(`Campo de orçamento desconhecido: ${chave}`);
+    }
+  }
+
   const now = Date.now();
 
   const insertCols = ["store_id", "periodo_inicio", "status", "created_at", "updated_at"];
@@ -49,7 +88,7 @@ export async function upsertOrcamentoRascunho(
   const setParams: unknown[] = [now];
 
   for (const chave of chaves) {
-    const coluna = camelToSnake(chave);
+    const coluna = CAMPO_PARA_COLUNA[chave];
     insertCols.push(coluna);
     insertPlaceholders.push("?");
     insertParams.push(input.campos[chave] ?? null);

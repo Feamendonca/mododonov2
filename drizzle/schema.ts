@@ -891,6 +891,8 @@ export const orcamentos = pgTable("orcamentos", {
   prazoDecisao: varchar("prazo_decisao", { length: 10 }), // YYYY-MM-DD
   decisao: varchar("decisao", { length: 20 }), // 'seguir' | 'encerrar'
   rampaMeses: integer("rampa_meses"),
+  // Folha (grupo 7 — Colaboradores). Distinta de pro_labore (grupo 13).
+  folha: numeric("folha", { precision: 14, scale: 2 }),
 }, (t) => ({
   uqOrcamentoStorePeriodo: uniqueIndex("uq_orcamento_store_periodo").on(t.storeId, t.periodoInicio),
 }));

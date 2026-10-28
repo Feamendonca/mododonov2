@@ -124,6 +124,34 @@ describe("upsertOrcamentoRascunho", () => {
     expect(sql).not.toContain("receita_bruta");
     expect(sql).not.toContain("cmv_pct");
   });
+
+  it("grava `folha` na coluna própria `folha` (distinta de pro_labore)", async () => {
+    (rawQuery as any).mockResolvedValue([{ id: 11 }]);
+
+    const result = await upsertOrcamentoRascunho({
+      storeId: 5,
+      periodoInicio: "2026-11-01",
+      campos: { folha: 185000 },
+    });
+
+    expect(result).toEqual({ id: 11 });
+    const [sql, params] = (rawQuery as any).mock.calls[0];
+    // Coluna folha presente; pro_labore NÃO (são colunas distintas).
+    expect(sql).toMatch(/\bfolha\b/);
+    expect(sql).not.toContain("pro_labore");
+    expect(params).toContain(185000);
+  });
+
+  it("chave fora do whitelist → lança erro claro e NÃO chega no banco", async () => {
+    await expect(
+      upsertOrcamentoRascunho({
+        storeId: 5,
+        periodoInicio: "2026-11-01",
+        campos: { xpto: 123 },
+      })
+    ).rejects.toThrow("Campo de orçamento desconhecido: xpto");
+    expect(rawQuery).not.toHaveBeenCalled();
+  });
 });
 
 // ─── salvarRascunho (tRPC) ───────────────────────────────────────────────────
@@ -163,6 +191,30 @@ describe("orcamento.salvarRascunho", () => {
 
     expect(result).toEqual({ id: 100 });
     expect(getStoresByUserId).not.toHaveBeenCalled();
+  });
+
+  it("grava campos.folha na coluna folha (via tRPC)", async () => {
+    (rawQuery as any).mockResolvedValue([{ id: 101 }]);
+    const caller = orcamentoRouter.createCaller(ctxGerenteLoja5);
+
+    const result = await caller.salvarRascunho({
+      storeId: 5,
+      periodoInicio: "2026-11-01",
+      campos: { folha: 185000 },
+    });
+
+    expect(result).toEqual({ id: 101 });
+    const [sql, params] = (rawQuery as any).mock.calls[0];
+    expect(sql).toMatch(/\bfolha\b/);
+    expect(params).toContain(185000);
+  });
+
+  it("campos com chave desconhecida → erro de campo desconhecido, NÃO grava", async () => {
+    const caller = orcamentoRouter.createCaller(ctxGerenteLoja5);
+    await expect(
+      caller.salvarRascunho({ storeId: 5, periodoInicio: "2026-11-01", campos: { xpto: 1 } })
+    ).rejects.toThrow(/Campo de orçamento desconhecido: xpto/);
+    expect(rawQuery).not.toHaveBeenCalled();
   });
 });
 

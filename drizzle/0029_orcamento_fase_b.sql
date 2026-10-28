@@ -18,3 +18,5 @@ ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS em_atencao BOOLEAN NOT NULL DEFA
 ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS prazo_decisao VARCHAR(10);
 ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS decisao VARCHAR(20);
 ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS rampa_meses INTEGER;
+-- Folha (grupo 7 — Colaboradores). Distinta de pro_labore (grupo 13).
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS folha NUMERIC(14,2);
