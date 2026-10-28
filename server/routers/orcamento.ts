@@ -25,7 +25,10 @@ import {
   extrairGruposPorMes,
   proporOrcamento as proporOrcamentoDeterministico,
   calcularDre,
+  type GrupoDreMes,
+  type RascunhoOrcamento,
 } from "../orcamento-proposta";
+import { gerarSugestaoIA } from "../orcamento-ia";
 import { storageDownload } from "../storage";
 import {
   upsertOrcamentoRascunho,
@@ -256,6 +259,27 @@ export const orcamentoRouter = router({
       const rascunho = proporOrcamentoDeterministico(gruposPorMes);
       const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
       return { rascunho, dre };
+    }),
+
+  // Camada de IA aditiva (Task 8, Fase B): a IA SUGERE ajustes e APONTA
+  // alavancas fracas por cima do rascunho determinístico — ela NÃO lê
+  // planilha (recebe `historico`/`rascunho` já extraídos pelo cliente a
+  // partir de `proporDaDre`) e NÃO grava nada. Fallback silencioso embutido
+  // em `gerarSugestaoIA`: qualquer erro de LLM vira `{sugestoes:{},
+  // alavancasFracas:[]}`, sem lançar — o rascunho determinístico continua
+  // de pé mesmo se a IA cair.
+  sugestaoIA: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      historico: z.array(z.any()),
+      rascunho: z.any(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      return gerarSugestaoIA({
+        historico: input.historico as GrupoDreMes[],
+        rascunho: input.rascunho as RascunhoOrcamento,
+      });
     }),
 
   salvarRascunho: protectedProcedure
