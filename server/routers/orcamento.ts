@@ -17,7 +17,7 @@ import {
   deleteLinhaCustom,
   type SaveOrcamentoInput,
 } from "../db-orcamento";
-import { getDb } from "../db";
+import { getDb, getStoreById } from "../db";
 import { invokeLLM } from "../_core/llm";
 import { TRPCError } from "@trpc/server";
 import {
@@ -29,6 +29,7 @@ import {
 } from "../orcamento-proposta";
 import { gerarSugestaoIA } from "../orcamento-ia";
 import { storageDownload, storageGetPresignedPutUrl } from "../storage";
+import { listFolderFiles, pickLatestDre, downloadSpFile } from "../sharepoint";
 import {
   upsertOrcamentoRascunho,
   aprovarOrcamento as aprovarOrcamentoRascunho,
@@ -277,6 +278,46 @@ export const orcamentoRouter = router({
       const rascunho = proporOrcamentoDeterministico(gruposPorMes);
       const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
       return { rascunho, dre };
+    }),
+
+  // ── Importação direto do SharePoint (Task S3) ───────────────────────────
+  // Igual a `proporDaDre`, mas a origem dos bytes é a pasta de DRE configurada
+  // na loja (SharePoint, via Graph) em vez de um upload manual. NÃO grava nada.
+  importarDoSharePoint: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      meses: z.number().int().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+
+      const store = await getStoreById(input.storeId);
+      if (!store?.dreSharepointUrl) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Loja sem pasta de DRE configurada no SharePoint.",
+        });
+      }
+
+      const files = await listFolderFiles(store.dreSharepointUrl);
+      const alvo = pickLatestDre(files, store.dreFileFilter ?? undefined);
+      if (!alvo) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Nenhuma DRE (.xlsx) encontrada na pasta configurada.",
+        });
+      }
+
+      const buf = await downloadSpFile(alvo);
+      const gruposPorMes = extrairGruposPorMes(buf, alvo.name, undefined, input.meses ?? 3);
+      const rascunho = proporOrcamentoDeterministico(gruposPorMes);
+      const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
+
+      return {
+        rascunho,
+        dre,
+        fonte: { nome: alvo.name, data: alvo.lastModifiedDateTime },
+      };
     }),
 
   // Camada de IA aditiva (Task 8, Fase B): a IA SUGERE ajustes e APONTA
