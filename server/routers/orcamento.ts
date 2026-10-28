@@ -30,6 +30,7 @@ import { storageDownload } from "../storage";
 import {
   upsertOrcamentoRascunho,
   aprovarOrcamento as aprovarOrcamentoRascunho,
+  getMetasDiarias,
 } from "../db-orcamento-v2";
 
 /** Dias de operação padrão usado só para a PRÉVIA de `proporDaDre` (metaDiaria).
@@ -283,6 +284,16 @@ export const orcamentoRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional aprova orçamento" });
       }
       return aprovarOrcamentoRascunho(input.orcamentoId, ctx.user.id);
+    }),
+
+  // Metas diárias (Task 6, Fase B): geradas automaticamente em `aprovarRascunho`
+  // quando o orçamento tem `receitaBruta` definida (distribuição uniforme por
+  // dia do mês). Sem dados → `[]` (loja sem orçamento aprovado não quebra).
+  getMetasDiarias: protectedProcedure
+    .input(z.object({ storeId: z.number().int(), anoMes: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ ctx, input }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      return getMetasDiarias(input.storeId, input.anoMes);
     }),
 
   // ── Linhas Customizáveis ─────────────────────────────────────────────────
