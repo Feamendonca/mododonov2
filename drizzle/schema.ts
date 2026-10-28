@@ -77,6 +77,10 @@ export const stores = pgTable("stores", {
   segmento: varchar("segmento", { length: 50 }),
   /** Faixa de faturamento calculada automaticamente. 'ate_300k' | '300k_600k' | 'acima_600k'. Migration 0021. */
   faixaFaturamento: varchar("faixaFaturamento", { length: 20 }),
+  /** URL da pasta da loja no SharePoint onde ficam os arquivos de DRE. Migration 0030. */
+  dreSharepointUrl: text("dreSharepointUrl"),
+  /** Filtro de nome de arquivo (ex.: "Praça") pra desambiguar sub-unidades na mesma pasta. Migration 0030. */
+  dreFileFilter: varchar("dreFileFilter", { length: 120 }),
 });
 
 export type Store = typeof stores.$inferSelect;
