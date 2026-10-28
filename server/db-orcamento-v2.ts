@@ -59,8 +59,8 @@ const CAMPO_PARA_COLUNA: Record<string, string> = {
 export interface UpsertOrcamentoRascunhoInput {
   storeId: number;
   periodoInicio: string; // YYYY-MM-DD
-  /** Somente as chaves presentes aqui são gravadas/atualizadas. */
-  campos: Partial<Record<string, number | string | null>>;
+  /** Somente as chaves presentes aqui são gravadas/atualizadas. `boolean` cobre `emAtencao`. */
+  campos: Partial<Record<string, number | string | boolean | null>>;
 }
 
 /**

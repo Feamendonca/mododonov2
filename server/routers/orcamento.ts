@@ -8,7 +8,6 @@ import {
   listAllOrcamentos,
   listOrcamentosByStoreIds,
   saveOrcamento,
-  aprovarOrcamento,
   proporOrcamento,
   calcularOrcamento,
   getMetaDiaria,
@@ -29,7 +28,7 @@ import {
   type RascunhoOrcamento,
 } from "../orcamento-proposta";
 import { gerarSugestaoIA } from "../orcamento-ia";
-import { storageDownload } from "../storage";
+import { storageDownload, storageGetPresignedPutUrl } from "../storage";
 import {
   upsertOrcamentoRascunho,
   aprovarOrcamento as aprovarOrcamentoRascunho,
@@ -229,16 +228,35 @@ export const orcamentoRouter = router({
       return { ok: true };
     }),
 
-  aprovar: adminProcedure
-    .input(z.object({ id: z.number().int() }))
-    .mutation(async ({ ctx, input }) => {
-      const result = await aprovarOrcamento(input.id, ctx.user.name ?? ctx.user.openId);
-      return result;
-    }),
-
   metaDiaria: protectedProcedure
     .input(z.object({ storeId: z.number().int(), data: z.string() }))
     .query(async ({ input }) => getMetaDiaria(input.storeId, input.data)),
+
+  // ── Upload da DRE (Task 9, Fase B) ───────────────────────────────────────
+  // URL assinada de upload direto ao Supabase Storage (bypass do backend) —
+  // o cliente faz PUT direto nessa URL e depois chama `proporDaDre` com a
+  // `storageKey` devolvida aqui.
+  getUploadUrl: protectedProcedure
+    .input(z.object({
+      fileName: z.string().min(1),
+      contentType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const ext = input.fileName.split(".").pop()?.toLowerCase() ?? "";
+      const CT_MAP: Record<string, string> = {
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        xlsb: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+        xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+        xls: "application/vnd.ms-excel",
+        csv: "text/csv",
+      };
+      const contentType = input.contentType ?? CT_MAP[ext] ?? "application/octet-stream";
+      const { uploadUrl, key } = await storageGetPresignedPutUrl(
+        `orcamento/${Date.now()}_${input.fileName}`,
+        contentType
+      );
+      return { uploadUrl, storageKey: key };
+    }),
 
   // ── Fluxo propor→confirmar→salvar (Task 4, Fase B) ──────────────────────
   // A IA/parser PROPÕE (determinístico, sem IA de fato — ver orcamento-proposta.ts)
@@ -286,7 +304,9 @@ export const orcamentoRouter = router({
     .input(z.object({
       storeId: z.number().int(),
       periodoInicio: z.string(),
-      campos: z.record(z.string(), z.union([z.number(), z.string(), z.null()])),
+      // z.boolean() cobre `emAtencao` (coluna BOOLEAN) — Task 9: a tela grava
+      // o em-atenção calculado em `proporOrcamento` junto do rascunho.
+      campos: z.record(z.string(), z.union([z.number(), z.string(), z.boolean(), z.null()])),
     }))
     .mutation(async ({ input, ctx }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);

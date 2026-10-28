@@ -121,7 +121,6 @@ function Router() {
       <Route path="/trilhas" component={() => <PageRoute path="/trilhas" component={TrilhasPage} titulo="Trilhas" />} />
       <Route path="/orcamento/editar/:id" component={() => <PageRoute path="/orcamento/editar/:id" component={OrcamentoPage} titulo="Orçamento" />} />
       <Route path="/orcamento" component={() => <PageRoute path="/orcamento" component={OrcamentoPage} titulo="Orçamento" />} />
-      <Route path="/orcamento-assistido" component={() => <PageRoute path="/orcamento-assistido" component={OrcamentoPage} titulo="Orçamento Assistido" />} />
       <Route path="/manutencoes" component={() => <PageRoute path="/manutencoes" component={ManutencoesPage} titulo="Manutenções" />} />
       <Route path="/meta" component={() => <PageRoute path="/meta" component={MetaPage} />} />
       <Route path="/remuneracao" component={() => <PageRoute path="/remuneracao" component={RemuneracaoPage} />} />

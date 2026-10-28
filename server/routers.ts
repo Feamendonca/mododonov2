@@ -25,7 +25,6 @@ import { preturnoRouter } from "./routers/preturno";
 import { trilhasRouter } from "./routers/trilhas";
 import { getTrailProgressByStore } from "./db-trilhas";
 import { orcamentoRouter } from "./routers/orcamento";
-import { orcamentoAssistidoRouter } from "./routers/orcamento-assistido";
 import { manutencoesRouter } from "./routers/manutencoes";
 import { checklistRouter } from "./routers/checklist";
 import { metasRouter } from "./routers/metas";
@@ -935,7 +934,6 @@ export const appRouter = router({
   preturno: preturnoRouter,
   trilhas: trilhasRouter,
   orcamento: orcamentoRouter,
-  orcamentoAssistido: orcamentoAssistidoRouter,
   manutencoes: manutencoesRouter,
   checklist: checklistRouter,
 

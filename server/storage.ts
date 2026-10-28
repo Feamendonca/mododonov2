@@ -3,7 +3,7 @@
 // temporária (nunca URL pública permanente).
 //
 // Contrato preservado para os chamadores (server/routers.ts,
-// server/routers/orcamento-assistido.ts, server/_core/imageGeneration.ts):
+// server/routers/orcamento.ts, server/_core/imageGeneration.ts):
 //   storagePut, storageGetPresignedPutUrl, storageDownload, storageGet,
 //   storageGetSignedUrl — mesmos nomes e assinaturas de antes.
 //
