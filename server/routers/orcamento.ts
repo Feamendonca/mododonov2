@@ -30,6 +30,7 @@ import { storageDownload } from "../storage";
 import {
   upsertOrcamentoRascunho,
   aprovarOrcamento as aprovarOrcamentoRascunho,
+  registrarDecisao as registrarDecisaoOrcamento,
   getMetasDiarias,
 } from "../db-orcamento-v2";
 
@@ -284,6 +285,21 @@ export const orcamentoRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional aprova orçamento" });
       }
       return aprovarOrcamentoRascunho(input.orcamentoId, ctx.user.id);
+    }),
+
+  // Decisão seguir/encerrar de loja "em atenção" (Task 7, Fase B): só admin ou
+  // supervisor (regional) decide — gerente comum NÃO decide. Mesmo padrão de
+  // papel de `aprovarRascunho`. NÃO recalcula nada — só grava `decisao`.
+  registrarDecisao: protectedProcedure
+    .input(z.object({
+      orcamentoId: z.number().int(),
+      decisao: z.enum(["seguir", "encerrar"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional decide seguir/encerrar" });
+      }
+      return registrarDecisaoOrcamento(input.orcamentoId, input.decisao);
     }),
 
   // Metas diárias (Task 6, Fase B): geradas automaticamente em `aprovarRascunho`

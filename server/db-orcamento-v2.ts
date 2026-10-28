@@ -50,6 +50,10 @@ const CAMPO_PARA_COLUNA: Record<string, string> = {
   marketing: "marketing",
   outrasDespesas: "outras_despesas",
   proLabore: "pro_labore",
+  emAtencao: "em_atencao",
+  rampaMeses: "rampa_meses",
+  prazoDecisao: "prazo_decisao",
+  decisao: "decisao",
 };
 
 export interface UpsertOrcamentoRascunhoInput {
@@ -198,6 +202,27 @@ export async function gerarMetasDiarias(
 
   await rawQuery(sql, params);
   return diasNoMes;
+}
+
+/**
+ * Registra a decisão seguir/encerrar de uma loja "em atenção" (Task 7, Fase B).
+ * Contrato duro igual a `aprovarOrcamento`: só muda `decisao` — não recalcula
+ * nem toca em nenhum outro valor financeiro. A checagem de papel (quem PODE
+ * decidir) é feita no router (`server/routers/orcamento.ts`), não aqui.
+ */
+export async function registrarDecisao(
+  orcamentoId: number,
+  decisao: "seguir" | "encerrar"
+): Promise<{ id: number; decisao: string }> {
+  const rows = await rawQuery(
+    `UPDATE orcamentos SET decisao = ? WHERE id = ? RETURNING id, decisao`,
+    [decisao, orcamentoId]
+  );
+  const row = rows[0] as { id: number; decisao: string } | undefined;
+  if (!row) {
+    throw new Error(`registrarDecisao: orçamento ${orcamentoId} não encontrado`);
+  }
+  return { id: row.id, decisao: row.decisao };
 }
 
 export interface MetaDiariaRow {

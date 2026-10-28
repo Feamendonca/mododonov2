@@ -180,27 +180,34 @@ describe("proporOrcamento", () => {
     expect(rascunho.tarifasBancarias).toBeNull();
   });
 
-  it("emAtencao = false quando os campos-base (receita/cmv/folha) estão presentes", () => {
+  // Nota (Task 7, Fase B): `emAtencao` deixou de ser "faltam dados-base" e
+  // passou a ser a regra REAL — resultado operacional médio (soma dos grupos
+  // 1..11, com sinal) negativo. Cobertura completa do novo critério está em
+  // `orcamento-em-atencao.test.ts`; os testes abaixo só confirmam que, com
+  // ESTE histórico (positivo), o critério novo concorda com o antigo.
+  it("emAtencao = false quando o resultado operacional médio do histórico é positivo", () => {
     const rascunho = proporOrcamento(gruposPorMes);
     expect(rascunho.emAtencao).toBe(false);
+    expect(rascunho.rampaMeses).toBeNull();
   });
 
-  it("emAtencao = true quando falta o grupo de CMV em todos os meses (sem base pra orçar a alavanca principal)", () => {
+  it("grupo de CMV ausente em todos os meses não derruba o resultado operacional pra negativo (removendo uma despesa o resultado só aumenta) → emAtencao continua false", () => {
     const semCmv: GrupoDreMes[] = gruposPorMes.map(m => {
       const { "4": _omit, ...resto } = m.grupos;
       return { anoMes: m.anoMes, grupos: resto };
     });
     const rascunho = proporOrcamento(semCmv);
     expect(rascunho.cmvPct).toBeNull();
-    expect(rascunho.emAtencao).toBe(true);
+    expect(rascunho.emAtencao).toBe(false);
   });
 
-  it("lista vazia de meses → todos os campos null e emAtencao=true", () => {
+  it("lista vazia de meses → todos os campos null e emAtencao=false (sem histórico não há base pra afirmar que a loja está no vermelho)", () => {
     const rascunho = proporOrcamento([]);
     expect(rascunho.receitaBruta).toBeNull();
     expect(rascunho.cmvPct).toBeNull();
     expect(rascunho.folha).toBeNull();
-    expect(rascunho.emAtencao).toBe(true);
+    expect(rascunho.emAtencao).toBe(false);
+    expect(rascunho.rampaMeses).toBeNull();
   });
 });
 
@@ -228,6 +235,7 @@ describe("calcularDre", () => {
     outrasDespesas: 1000,
     proLabore: 8000,
     emAtencao: false,
+    rampaMeses: null,
   };
 
   it("calcula ebitda/ebitdaPct/pontoEquilibrio/metaDiaria com rascunho 100% preenchido (parcial=false)", () => {

@@ -157,8 +157,16 @@ export interface RascunhoOrcamento {
   marketing: number | null;
   outrasDespesas: number | null;
   proLabore: number | null;
-  /** true quando faltam dados-base (receita/CMV/folha) — rascunho precisa de revisão manual. */
+  /**
+   * true quando o RESULTADO OPERACIONAL médio do histórico (soma dos grupos
+   * nível-1 "1".."11", que já vêm com sinal — receita positiva, despesas
+   * negativas; equivale ao grupo 12 "Lucro Operacional", mas CALCULADO pelos
+   * componentes, nunca lido pronto da linha 12) é negativo. Loja "em
+   * atenção" entra em rampa de recuperação (ver `rampaMeses`).
+   */
   emAtencao: boolean;
+  /** Meses de rampa até a decisão seguir/encerrar. `3` quando `emAtencao`; senão `null`. */
+  rampaMeses: number | null;
 }
 
 function media(valores: number[]): number | null {
@@ -242,7 +250,25 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
   const cmvPct = media(cmvPctPorMes);
   const folha = media(folhaPorMes);
 
-  const emAtencao = receitaBruta === null || cmvPct === null || folha === null;
+  // Resultado operacional de CADA mês = soma dos grupos nível-1 "1".."11"
+  // presentes naquele mês (grupo ausente contribui 0 — nunca trava o cálculo,
+  // nunca chuta um valor pro grupo faltante). Média sobre os meses do
+  // histórico. Mês sem NENHUM grupo some do resultado (soma=0), igual a um
+  // mês "neutro" — não inventa sinal onde não há dado algum.
+  const resultadosOperacionaisPorMes = gruposPorMes.map((mes) => {
+    let soma = 0;
+    for (let codigo = 1; codigo <= 11; codigo++) {
+      const v = mes.grupos[String(codigo)];
+      if (typeof v === "number") soma += v;
+    }
+    return soma;
+  });
+  const resultadoOperacionalMedio = media(resultadosOperacionaisPorMes);
+
+  // Sem NENHUM mês de histórico não há base pra afirmar que a loja está no
+  // vermelho — `emAtencao=false` (nunca assume o pior sem dado).
+  const emAtencao = resultadoOperacionalMedio !== null && resultadoOperacionalMedio < 0;
+  const rampaMeses = emAtencao ? 3 : null;
 
   return {
     receitaBruta,
@@ -267,7 +293,30 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
     outrasDespesas: media(outrasDespesasPorMes),
     proLabore: media(proLaborePorMes),
     emAtencao,
+    rampaMeses,
   };
+}
+
+// ─── calcularPrazoDecisao ─────────────────────────────────────────────────────
+
+/**
+ * Prazo (YYYY-MM-DD) pra decisão seguir/encerrar de uma loja "em atenção":
+ * `periodoInicio` + `rampaMeses` meses. PURA — não depende de "hoje", só de
+ * aritmética de data em UTC (evita bug de fuso-horário em torno da meia-noite).
+ * Normaliza troca de ano automaticamente (ex.: nov/2026 + 3 meses → fev/2027).
+ */
+export function calcularPrazoDecisao(periodoInicio: string, rampaMeses: number): string {
+  const [anoStr, mesStr, diaStr] = periodoInicio.split("-");
+  const ano = Number(anoStr);
+  const mes = Number(mesStr); // 1-12
+  const dia = Number(diaStr);
+
+  const d = new Date(Date.UTC(ano, mes - 1 + rampaMeses, dia));
+
+  const anoOut = d.getUTCFullYear();
+  const mesOut = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const diaOut = String(d.getUTCDate()).padStart(2, "0");
+  return `${anoOut}-${mesOut}-${diaOut}`;
 }
 
 // ─── calcularDre ──────────────────────────────────────────────────────────────
