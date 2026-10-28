@@ -109,7 +109,10 @@ export async function listFolderFiles(folderUrl: string): Promise<SpFile[]> {
   const shareId = encodeShareUrl(folderUrl);
 
   let nextUrl: string | undefined =
-    `${GRAPH_BASE}/shares/${shareId}/driveItem/children?$select=name,lastModifiedDateTime&$top=200`;
+    // Sem $select: precisamos do campo `file` (pra saber que é arquivo) e do
+    // `@microsoft.graph.downloadUrl` (link de download) — um $select restrito
+    // omitiria os dois e a lista voltaria vazia.
+    `${GRAPH_BASE}/shares/${shareId}/driveItem/children?$top=200`;
 
   const files: SpFile[] = [];
 
