@@ -20,3 +20,7 @@ ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS decisao VARCHAR(20);
 ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS rampa_meses INTEGER;
 -- Folha (grupo 7 — Colaboradores). Distinta de pro_labore (grupo 13).
 ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS folha NUMERIC(14,2);
+
+-- Aprovação (Task 5, Fase B) — admin ou supervisor (regional) aprova o rascunho.
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS aprovado_por INTEGER;
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS aprovado_em BIGINT;

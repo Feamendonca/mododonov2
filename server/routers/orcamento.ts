@@ -27,7 +27,10 @@ import {
   calcularDre,
 } from "../orcamento-proposta";
 import { storageDownload } from "../storage";
-import { upsertOrcamentoRascunho } from "../db-orcamento-v2";
+import {
+  upsertOrcamentoRascunho,
+  aprovarOrcamento as aprovarOrcamentoRascunho,
+} from "../db-orcamento-v2";
 
 /** Dias de operação padrão usado só para a PRÉVIA de `proporDaDre` (metaDiaria).
  * Não é um valor financeiro gravado em lugar nenhum — é apenas o divisor usado
@@ -267,6 +270,19 @@ export const orcamentoRouter = router({
         campos: input.campos,
       });
       return { id };
+    }),
+
+  // Aprovação do rascunho (Task 5, Fase B): só admin ou supervisor (regional)
+  // aprova — gerente comum NÃO aprova. Usa `protectedProcedure` (não
+  // `adminProcedure`) porque supervisor também é permitido; a checagem de
+  // papel é explícita aqui. NÃO recalcula valores — só muda status/aprovador.
+  aprovarRascunho: protectedProcedure
+    .input(z.object({ orcamentoId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Só admin ou regional aprova orçamento" });
+      }
+      return aprovarOrcamentoRascunho(input.orcamentoId, ctx.user.id);
     }),
 
   // ── Linhas Customizáveis ─────────────────────────────────────────────────

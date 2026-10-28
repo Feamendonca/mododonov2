@@ -893,6 +893,9 @@ export const orcamentos = pgTable("orcamentos", {
   rampaMeses: integer("rampa_meses"),
   // Folha (grupo 7 — Colaboradores). Distinta de pro_labore (grupo 13).
   folha: numeric("folha", { precision: 14, scale: 2 }),
+  // ── Aprovação (Task 5, Fase B) ──
+  aprovadoPor: integer("aprovado_por"),
+  aprovadoEm: bigint("aprovado_em", { mode: "number" }),
 }, (t) => ({
   uqOrcamentoStorePeriodo: uniqueIndex("uq_orcamento_store_periodo").on(t.storeId, t.periodoInicio),
 }));

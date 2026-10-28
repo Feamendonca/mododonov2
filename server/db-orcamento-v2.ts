@@ -108,3 +108,29 @@ export async function upsertOrcamentoRascunho(
   if (id === undefined) throw new Error("upsertOrcamentoRascunho: RETURNING id vazio");
   return { id };
 }
+
+/**
+ * Aprovação (Task 5, Fase B): promove o orçamento de 'rascunho' para
+ * 'aprovado', registrando quem aprovou e quando.
+ *
+ * Contrato duro: NÃO recalcula nem sobrescreve nenhum valor financeiro — só
+ * muda `status`/`aprovado_por`/`aprovado_em`. Os valores já foram gravados
+ * pelo gerente via `upsertOrcamentoRascunho`. A checagem de papel (quem PODE
+ * aprovar) é feita no router (`server/routers/orcamento.ts`), não aqui.
+ */
+export async function aprovarOrcamento(
+  orcamentoId: number,
+  aprovadoPor: number
+): Promise<{ id: number; status: string }> {
+  const now = Date.now();
+  const rows = await rawQuery(
+    `UPDATE orcamentos SET status = 'aprovado', aprovado_por = ?, aprovado_em = ? ` +
+      `WHERE id = ? RETURNING id, status`,
+    [aprovadoPor, now, orcamentoId]
+  );
+  const row = rows[0] as { id: number; status: string } | undefined;
+  if (!row) {
+    throw new Error(`aprovarOrcamento: orçamento ${orcamentoId} não encontrado`);
+  }
+  return { id: row.id, status: row.status };
+}
