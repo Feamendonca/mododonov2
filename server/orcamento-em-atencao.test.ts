@@ -101,7 +101,84 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     expect(rascunho.rampaMeses).toBeNull();
   });
 
-  it("NÃO relê o grupo 12/14 (linha de resultado) — soma só os componentes 1..11, mesmo que a linha 12 da planilha esteja presente e divirja", () => {
+  it("DRE F360 REAL (com grupos 2, 3 e 12 presentes): loja no vermelho (receita líquida ~700k, custos 4..11 ~-750k) → emAtencao=true, SEM dupla contagem de receita bruta + receita líquida", () => {
+    // Na DRE F360 real, grupo 3 (Receita Líquida) é DERIVADO (= grupo 1 +
+    // grupo 2 Redutores) e vem preenchido no arquivo. Somar 1..11 cru contaria
+    // Receita Bruta + Redutores + Receita Líquida juntos → infla o resultado.
+    // O resultado operacional correto = Receita Líquida (grupo 3) + custos 4..11.
+    const gruposPorMes: GrupoDreMes[] = [
+      {
+        anoMes: "2026-07",
+        grupos: {
+          "1": 720000, // Receita Bruta
+          "2": -20000, // Redutores de Venda
+          "3": 700000, // Receita Líquida (DERIVADA = 1 + 2)
+          "4": -250000, // CMV
+          "5": -55000, // impostos
+          "6": -16000, // royalties/fundo
+          "7": -300000, // folha
+          "8": -12000, // serviços
+          "9": -40000, // terceiros eventuais
+          "10": -62000, // ocupação
+          "11": -15000, // financeiras
+          "12": -50000, // Lucro Operacional (DERIVADO) — deve ser IGNORADO
+        },
+        // receita líquida 700000 + custos(4..11 = -750000) = -50000 (vermelho).
+        // Soma CRUA 1..11 (bug) = 720000-20000+700000-750000 = +650000 (falso positivo).
+      },
+      {
+        anoMes: "2026-08",
+        grupos: {
+          "1": 720000,
+          "2": -20000,
+          "3": 700000,
+          "4": -250000,
+          "5": -55000,
+          "6": -16000,
+          "7": -300000,
+          "8": -12000,
+          "9": -40000,
+          "10": -62000,
+          "11": -15000,
+          "12": -50000,
+        },
+      },
+    ];
+
+    const rascunho = proporOrcamento(gruposPorMes);
+
+    expect(rascunho.emAtencao).toBe(true);
+    expect(rascunho.rampaMeses).toBe(3);
+  });
+
+  it("DRE F360 REAL com grupos 2/3/12 presentes mas loja saudável (receita líquida 700k, custos 4..11 ~-600k) → emAtencao=false", () => {
+    const gruposPorMes: GrupoDreMes[] = [
+      {
+        anoMes: "2026-07",
+        grupos: {
+          "1": 720000,
+          "2": -20000,
+          "3": 700000,
+          "4": -200000,
+          "5": -50000,
+          "6": -15000,
+          "7": -180000,
+          "8": -10000,
+          "10": -40000,
+          "11": -12000,
+          "12": 193000, // derivado — ignorado
+        },
+        // 700000 + custos(-507000) = +193000 (saudável).
+      },
+    ];
+
+    const rascunho = proporOrcamento(gruposPorMes);
+
+    expect(rascunho.emAtencao).toBe(false);
+    expect(rascunho.rampaMeses).toBeNull();
+  });
+
+  it("NÃO relê o grupo 12/14 (linha de resultado) — soma só os componentes, mesmo que a linha 12 da planilha esteja presente e divirja", () => {
     // Monta um mês cujo "12" (lido, mas não deveria influenciar) diz uma
     // coisa e os componentes 1..11 dizem outra. O resultado tem que seguir
     // SEMPRE os componentes.

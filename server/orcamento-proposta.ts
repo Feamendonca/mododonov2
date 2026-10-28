@@ -250,14 +250,21 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
   const cmvPct = media(cmvPctPorMes);
   const folha = media(folhaPorMes);
 
-  // Resultado operacional de CADA mês = soma dos grupos nível-1 "1".."11"
-  // presentes naquele mês (grupo ausente contribui 0 — nunca trava o cálculo,
-  // nunca chuta um valor pro grupo faltante). Média sobre os meses do
-  // histórico. Mês sem NENHUM grupo some do resultado (soma=0), igual a um
-  // mês "neutro" — não inventa sinal onde não há dado algum.
+  // Resultado operacional de CADA mês = Receita Líquida + custos (grupos
+  // "4".."11", que já vêm negativos). Na DRE F360 real, grupo 3 "Receita
+  // Líquida" é DERIVADO (= grupo 1 Receita Bruta + grupo 2 Redutores) e vem
+  // preenchido no arquivo — então NUNCA somar o grupo 1 junto do 3 (dupla
+  // contagem da receita). Usa o grupo 3 quando presente; senão reconstrói por
+  // 1+2. Grupos 12/14 (Lucro Operacional / Resultado) são derivados e NUNCA
+  // entram. Grupo ausente contribui 0 — nunca chuta valor pro faltante. Mês
+  // sem NENHUM dado some do resultado (0), um mês "neutro".
   const resultadosOperacionaisPorMes = gruposPorMes.map((mes) => {
-    let soma = 0;
-    for (let codigo = 1; codigo <= 11; codigo++) {
+    const g3 = mes.grupos["3"];
+    const receitaLiq = typeof g3 === "number"
+      ? g3
+      : (mes.grupos["1"] ?? 0) + (mes.grupos["2"] ?? 0);
+    let soma = receitaLiq;
+    for (let codigo = 4; codigo <= 11; codigo++) {
       const v = mes.grupos[String(codigo)];
       if (typeof v === "number") soma += v;
     }
