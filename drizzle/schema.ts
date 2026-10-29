@@ -918,3 +918,18 @@ export const orcamentoMetasDiarias = pgTable("orcamento_metas_diarias", {
   uqMetaDiaria: uniqueIndex("uq_meta_diaria").on(t.storeId, t.data),
 }));
 export type OrcamentoMetaDiariaRow = typeof orcamentoMetasDiarias.$inferSelect;
+
+// ─── Orçamento — Linhas (espelha a DRE, linha a linha) — migration 0031 ───────
+export const orcamentoLinhas = pgTable("orcamento_linhas", {
+  id: serial("id").primaryKey(),
+  orcamentoId: integer("orcamento_id").notNull(),
+  codigo: varchar("codigo", { length: 20 }).notNull(),
+  label: varchar("label", { length: 160 }),
+  nivel: integer("nivel"),
+  valor: numeric("valor", { precision: 14, scale: 2 }),
+  ordem: integer("ordem"),
+  editavel: boolean("editavel").default(true),
+}, (t) => ({
+  uqOrcLinha: uniqueIndex("uq_orc_linha").on(t.orcamentoId, t.codigo),
+}));
+export type OrcamentoLinhaRow = typeof orcamentoLinhas.$inferSelect;
