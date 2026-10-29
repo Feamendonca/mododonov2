@@ -247,6 +247,104 @@ describe("pickLatestDre", () => {
   });
 });
 
+// ─── 4b. resolveDriveItem ───────────────────────────────────────────────────────
+
+describe("resolveDriveItem", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.resetAllMocks();
+    setEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearEnv();
+  });
+
+  it("URL de ARQUIVO → devolve { isFile: true, downloadUrl, name, lastModifiedDateTime }", async () => {
+    const tokenResponse = {
+      ok: true,
+      json: () => Promise.resolve({ access_token: "tok-file", expires_in: 3600 }),
+    };
+    const driveItemResponse = {
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "DRE Ano26 BGP (AZM).xlsb",
+          file: {},
+          lastModifiedDateTime: "2026-10-20T12:00:00Z",
+          "@microsoft.graph.downloadUrl": "http://d/arquivo",
+        }),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse)
+      .mockResolvedValueOnce(driveItemResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { resolveDriveItem } = await import("./sharepoint");
+    const item = await resolveDriveItem("https://contoso.sharepoint.com/:x:/r/sites/x/Doc.aspx?sourcedoc=%7B1%7D");
+
+    expect(item).toEqual({
+      name: "DRE Ano26 BGP (AZM).xlsb",
+      lastModifiedDateTime: "2026-10-20T12:00:00Z",
+      downloadUrl: "http://d/arquivo",
+      isFile: true,
+    });
+    const [calledUrl, calledOpts] = fetchMock.mock.calls[1];
+    expect(String(calledUrl)).toContain("/driveItem");
+    expect(calledOpts?.headers?.Authorization).toBe("Bearer tok-file");
+  });
+
+  it("URL de PASTA → devolve { isFile: false }, sem downloadUrl", async () => {
+    const tokenResponse = {
+      ok: true,
+      json: () => Promise.resolve({ access_token: "tok-folder", expires_in: 3600 }),
+    };
+    const driveItemResponse = {
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "Pasta DREs",
+          folder: {},
+          lastModifiedDateTime: "2026-10-01T00:00:00Z",
+        }),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse)
+      .mockResolvedValueOnce(driveItemResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { resolveDriveItem } = await import("./sharepoint");
+    const item = await resolveDriveItem("https://contoso.sharepoint.com/sites/x/Shared/Pasta");
+
+    expect(item?.isFile).toBe(false);
+    expect(item?.downloadUrl).toBeFalsy();
+  });
+
+  it("item não resolve (nem file nem folder, sem downloadUrl) → null", async () => {
+    const tokenResponse = {
+      ok: true,
+      json: () => Promise.resolve({ access_token: "tok-none", expires_in: 3600 }),
+    };
+    const driveItemResponse = {
+      ok: true,
+      json: () => Promise.resolve({ error: { message: "itemNotFound" } }),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse)
+      .mockResolvedValueOnce(driveItemResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { resolveDriveItem } = await import("./sharepoint");
+    const item = await resolveDriveItem("https://contoso.sharepoint.com/sites/x/nope");
+
+    expect(item).toBeNull();
+  });
+});
+
 // ─── 5. downloadSpFile ─────────────────────────────────────────────────────────
 
 describe("downloadSpFile", () => {

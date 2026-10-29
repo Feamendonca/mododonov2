@@ -29,7 +29,7 @@ import {
 } from "../orcamento-proposta";
 import { gerarSugestaoIA } from "../orcamento-ia";
 import { storageDownload, storageGetPresignedPutUrl } from "../storage";
-import { listFolderFiles, pickLatestDre, downloadSpFile } from "../sharepoint";
+import { resolveDriveItem, listFolderFiles, pickLatestDre, downloadSpFile } from "../sharepoint";
 import {
   upsertOrcamentoRascunho,
   aprovarOrcamento as aprovarOrcamentoRascunho,
@@ -299,13 +299,31 @@ export const orcamentoRouter = router({
         });
       }
 
-      const files = await listFolderFiles(store.dreSharepointUrl);
-      const alvo = pickLatestDre(files, store.dreFileFilter ?? undefined);
-      if (!alvo) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Nenhuma DRE (.xlsx) encontrada na pasta configurada.",
-        });
+      // A config da loja pode ser o link de um ARQUIVO (DRE anual fixa, ex.:
+      // Doc.aspx?sourcedoc=...) ou de uma PASTA (fluxo legado). resolveDriveItem
+      // descobre qual é; se não resolver (null), cai no fluxo de pasta de todo
+      // jeito — listFolderFiles/pickLatestDre tratam a URL e reportam NOT_FOUND
+      // se de fato não houver nada lá.
+      const resolved = await resolveDriveItem(store.dreSharepointUrl);
+
+      let alvo: { name: string; lastModifiedDateTime: string; downloadUrl: string };
+      if (resolved?.isFile) {
+        // Link de arquivo direto: baixa sem passar pelo filtro de nome da loja.
+        alvo = {
+          name: resolved.name,
+          lastModifiedDateTime: resolved.lastModifiedDateTime,
+          downloadUrl: resolved.downloadUrl,
+        };
+      } else {
+        const files = await listFolderFiles(store.dreSharepointUrl);
+        const pasta = pickLatestDre(files, store.dreFileFilter ?? undefined);
+        if (!pasta) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Nenhuma DRE (.xlsx) encontrada na pasta configurada.",
+          });
+        }
+        alvo = pasta;
       }
 
       const buf = await downloadSpFile(alvo);

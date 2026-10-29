@@ -21,6 +21,7 @@ vi.mock("./db", () => ({
 }));
 
 vi.mock("./sharepoint", () => ({
+  resolveDriveItem: vi.fn(),
   listFolderFiles: vi.fn(),
   pickLatestDre: vi.fn(),
   downloadSpFile: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("./orcamento-proposta", () => ({
 }));
 
 import { getStoreById, getStoresByUserId } from "./db";
-import { listFolderFiles, pickLatestDre, downloadSpFile } from "./sharepoint";
+import { resolveDriveItem, listFolderFiles, pickLatestDre, downloadSpFile } from "./sharepoint";
 import { extrairGruposPorMes, proporOrcamento, calcularDre } from "./orcamento-proposta";
 import { orcamentoRouter } from "./routers/orcamento";
 
@@ -92,6 +93,9 @@ describe("orcamento.importarDoSharePoint", () => {
       dreSharepointUrl: "https://contoso.sharepoint.com/sites/x/Shared/Pasta",
       dreFileFilter: "Praça",
     });
+    // Por padrão, a URL configurada resolve pra PASTA (fluxo legado é o default
+    // nestes testes — os testes específicos de ARQUIVO sobrescrevem este mock).
+    (resolveDriveItem as any).mockResolvedValue({ isFile: false });
     (listFolderFiles as any).mockResolvedValue([spFile]);
     (pickLatestDre as any).mockReturnValue(spFile);
     (downloadSpFile as any).mockResolvedValue(Buffer.from("fake-xlsx"));
@@ -164,6 +168,76 @@ describe("orcamento.importarDoSharePoint", () => {
       undefined,
       3
     );
+  });
+
+  it("dreSharepointUrl aponta pra ARQUIVO (Doc.aspx) → baixa direto, NÃO chama listFolderFiles/pickLatestDre, ignora dreFileFilter", async () => {
+    const spFileArquivo = {
+      name: "DRE Ano26 BGP (AZM).xlsb",
+      lastModifiedDateTime: "2026-10-20T12:00:00Z",
+      downloadUrl: "http://d/arquivo",
+    };
+    (getStoreById as any).mockResolvedValue({
+      id: 5,
+      dreSharepointUrl:
+        "https://amfoods534.sharepoint.com/:x:/r/sites/AmFoods/_layouts/15/Doc.aspx?sourcedoc=%7B1%7D&file=DRE.xlsb",
+      dreFileFilter: "Praça", // deve ser IGNORADO no fluxo de arquivo
+    });
+    (resolveDriveItem as any).mockResolvedValue({
+      name: spFileArquivo.name,
+      lastModifiedDateTime: spFileArquivo.lastModifiedDateTime,
+      downloadUrl: spFileArquivo.downloadUrl,
+      isFile: true,
+    });
+    (downloadSpFile as any).mockResolvedValue(Buffer.from("fake-xlsb"));
+
+    const caller = orcamentoRouter.createCaller(ctxGerenteLoja5);
+    const result = await caller.importarDoSharePoint({ storeId: 5, meses: 3 });
+
+    expect(resolveDriveItem).toHaveBeenCalledWith(
+      "https://amfoods534.sharepoint.com/:x:/r/sites/AmFoods/_layouts/15/Doc.aspx?sourcedoc=%7B1%7D&file=DRE.xlsb"
+    );
+    expect(listFolderFiles).not.toHaveBeenCalled();
+    expect(pickLatestDre).not.toHaveBeenCalled();
+    expect(downloadSpFile).toHaveBeenCalledWith({
+      name: spFileArquivo.name,
+      lastModifiedDateTime: spFileArquivo.lastModifiedDateTime,
+      downloadUrl: spFileArquivo.downloadUrl,
+    });
+    expect(extrairGruposPorMes).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      spFileArquivo.name,
+      undefined,
+      3
+    );
+    expect(result).toEqual({
+      rascunho: rascunhoFake,
+      dre: dreFake,
+      fonte: { nome: spFileArquivo.name, data: spFileArquivo.lastModifiedDateTime },
+    });
+  });
+
+  it("dreSharepointUrl aponta pra PASTA → usa listFolderFiles + pickLatestDre (fluxo legado) como antes", async () => {
+    (resolveDriveItem as any).mockResolvedValue({ isFile: false });
+    const caller = orcamentoRouter.createCaller(ctxGerenteLoja5);
+
+    await caller.importarDoSharePoint({ storeId: 5, meses: 3 });
+
+    expect(resolveDriveItem).toHaveBeenCalledWith(
+      "https://contoso.sharepoint.com/sites/x/Shared/Pasta"
+    );
+    expect(listFolderFiles).toHaveBeenCalledWith("https://contoso.sharepoint.com/sites/x/Shared/Pasta");
+    expect(pickLatestDre).toHaveBeenCalledWith([spFile], "Praça");
+    expect(downloadSpFile).toHaveBeenCalledWith(spFile);
+  });
+
+  it("resolveDriveItem devolve null (não resolveu nem como arquivo nem como pasta) → cai no fluxo de pasta legado", async () => {
+    (resolveDriveItem as any).mockResolvedValue(null);
+    const caller = orcamentoRouter.createCaller(ctxGerenteLoja5);
+
+    await caller.importarDoSharePoint({ storeId: 5, meses: 3 });
+
+    expect(listFolderFiles).toHaveBeenCalledWith("https://contoso.sharepoint.com/sites/x/Shared/Pasta");
+    expect(pickLatestDre).toHaveBeenCalledWith([spFile], "Praça");
   });
 
   it("admin passa para qualquer loja sem checar vínculo", async () => {

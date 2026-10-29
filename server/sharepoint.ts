@@ -164,6 +164,55 @@ export function pickLatestDre(files: SpFile[], filter?: string): SpFile | null {
   return candidates[0];
 }
 
+// ─── Resolução de item (arquivo OU pasta) ──────────────────────────────────────
+
+export interface ResolvedDriveItem {
+  name: string;
+  lastModifiedDateTime: string;
+  downloadUrl: string;
+  isFile: boolean;
+}
+
+/**
+ * Resolve uma URL compartilhada do SharePoint — seja ela link de ARQUIVO
+ * (ex.: Doc.aspx?sourcedoc=...) ou de PASTA — em `{ driveItem }` via
+ * `GET /shares/{id}/driveItem`.
+ *
+ * - Se o item é um arquivo com `@microsoft.graph.downloadUrl` → `{ isFile: true, downloadUrl, ... }`.
+ * - Se o item é uma pasta → `{ isFile: false }` (sem downloadUrl utilizável).
+ * - Se não resolver (erro, item sem `file` nem `folder`) → `null`.
+ */
+export async function resolveDriveItem(url: string): Promise<ResolvedDriveItem | null> {
+  const token = await getGraphToken();
+  const shareId = encodeShareUrl(url);
+
+  const resp = await fetch(`${GRAPH_BASE}/shares/${shareId}/driveItem`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const item = (await resp.json()) as GraphDriveItem;
+
+  const downloadUrl = item["@microsoft.graph.downloadUrl"];
+  if (item.file && downloadUrl) {
+    return {
+      name: item.name,
+      lastModifiedDateTime: item.lastModifiedDateTime ?? "",
+      downloadUrl,
+      isFile: true,
+    };
+  }
+
+  if (item.folder) {
+    return {
+      name: item.name,
+      lastModifiedDateTime: item.lastModifiedDateTime ?? "",
+      downloadUrl: "",
+      isFile: false,
+    };
+  }
+
+  return null;
+}
+
 // ─── Download ──────────────────────────────────────────────────────────────────
 
 /**
