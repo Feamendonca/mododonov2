@@ -99,8 +99,21 @@ export function extrairGruposPorMes(
   selectedSheet?: string,
   meses: number = DEFAULT_MESES,
 ): GrupoDreMes[] {
-  const parsed = parseSpreadsheetToGrid(fileBuffer, fileName, selectedSheet ? [selectedSheet] : undefined);
-  if (parsed.needsSheetSelection) return [];
+  let parsed = parseSpreadsheetToGrid(fileBuffer, fileName, selectedSheet ? [selectedSheet] : undefined);
+
+  // Arquivos reais de DRE costumam ter 1 aba por mês (JAN26, FEV26...) além
+  // da aba "DRE" — isso facilmente passa de MAX_AUTO_SHEETS (5), e
+  // parseSpreadsheetToGrid devolve needsSheetSelection=true sem ler nada. O
+  // caller (server/routers/orcamento.ts) nunca passa `selectedSheet`, então
+  // sem isto o arquivo real nunca seria lido. Resolve a aba "DRE" pelo nome
+  // (match exato, case-insensitive) e tenta de novo antes de desistir —
+  // mesmo sinal forte de nome já usado em detectDreSheetName (Task S6).
+  if (parsed.needsSheetSelection) {
+    const abaPorNome = parsed.sheetNames.find(n => n.trim().toUpperCase() === "DRE");
+    if (!abaPorNome) return [];
+    parsed = parseSpreadsheetToGrid(fileBuffer, fileName, [abaPorNome]);
+    if (parsed.needsSheetSelection) return [];
+  }
 
   const sheet = escolherAbaDre(parsed.sheets);
   if (!sheet) return [];
@@ -126,11 +139,26 @@ export function extrairGruposPorMes(
     }
   }
 
-  const todos: GrupoDreMes[] = Object.entries(porMes)
+  let todos: GrupoDreMes[] = Object.entries(porMes)
     .map(([anoMes, grupos]) => ({ anoMes, grupos }))
     .sort((a, b) => a.anoMes.localeCompare(b.anoMes));
 
+  // DRE orçamentário real (ex.: "DRE Ano26") tem coluna pra TODOS os 12
+  // meses do ano, mas os meses futuros (ainda sem execução) vêm com todos
+  // os grupos zerados — "últimos N meses" tem que pular essa cauda zerada,
+  // senão a "foto" devolvida é zero em vez do último histórico real
+  // (mesmo princípio do mês-base em extractDreContext). Só corta do FIM pra
+  // trás — nunca remove um mês real no meio da série (Task S6).
+  while (todos.length > 0 && !temGrupoComDadoReal(todos[todos.length - 1].grupos)) {
+    todos = todos.slice(0, -1);
+  }
+
   return todos.slice(-meses);
+}
+
+/** true quando ALGUM grupo nível-1 do mês tem valor ≠ 0 (mês com execução real, não só orçado/zerado). */
+function temGrupoComDadoReal(grupos: Record<string, number>): boolean {
+  return Object.values(grupos).some(v => v !== 0);
 }
 
 // ─── proporOrcamento ──────────────────────────────────────────────────────────

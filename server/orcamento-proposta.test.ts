@@ -58,6 +58,117 @@ function gerarFixtureDre(): Buffer {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+/**
+ * Simula o arquivo real da Bella Gula (`DRE Ano26 BGP (AZM).xlsb`): o
+ * cabeçalho de mês vem como SERIAL de data do Excel (número puro — 46023,
+ * 46054, 46082 — em vez de texto "jan/26"). Mesmo layout F360 (valor | % |
+ * vazio por mês), só muda o tipo da célula de cabeçalho (number, não string).
+ * Task S6: antes do fix, extrairGruposPorMes voltava [] (0 meses lidos).
+ */
+function gerarFixtureDreSerial(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Bella Gula", 46023, "%", "", 46054, "%", "", 46082, "%", ""],
+    ["1 - Receita Bruta", "R$ 500.000,00", "100,0%", "", "R$ 520.000,00", "100,0%", "", "R$ 540.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 150.000,00", "30,0%", "", "-R$ 156.000,00", "30,0%", "", "-R$ 160.000,00", "29,6%", ""],
+    ["7 - Colaboradores", "-R$ 120.000,00", "24,0%", "", "-R$ 125.000,00", "24,0%", "", "-R$ 130.000,00", "24,1%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+/**
+ * Simula o arquivo real da Bella Gula no que importa pra esta função: 15 abas
+ * (1 aba "DRE" + 14 abas auxiliares, uma por mês — DE-PARA, JAN26, FEV26...).
+ * `parseSpreadsheetToGrid` teria `needsSheetSelection=true` por ter >5 abas
+ * — `extrairGruposPorMes` precisa resolver a aba "DRE" por nome mesmo assim
+ * (sem exigir `selectedSheet` explícito, igual ao caller real em
+ * server/routers/orcamento.ts, que nunca passa `selectedSheet`).
+ */
+function gerarFixtureDreMuitasAbas(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Bella Gula", "Jan-26", "%", "", "Feb-26", "%", "", "Mar-26", "%", ""],
+    ["1 - Receita Bruta", "R$ 500.000,00", "100,0%", "", "R$ 520.000,00", "100,0%", "", "R$ 540.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 150.000,00", "30,0%", "", "-R$ 156.000,00", "30,0%", "", "-R$ 160.000,00", "29,6%", ""],
+    ["7 - Colaboradores", "-R$ 120.000,00", "24,0%", "", "-R$ 125.000,00", "24,0%", "", "-R$ 130.000,00", "24,1%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  // Aba "DE-PARA" (mapeamento, sem colunas de mês) — como no arquivo real.
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Código", "Descrição"], ["1", "RECEITA"]]), "DE-PARA");
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  for (const mes of ["JAN26", "FEV26", "MAR26", "ABR26", "MAI26", "JUN26", "JUL26", "AGO26", "SET26", "OUT26", "NOV26", "DEZ26", "JUN.25"]) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Mês", mes], ["Receita", "100000"]]), mes);
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — arquivo com muitas abas (>5), aba 'DRE' resolvida por nome (Task S6)", () => {
+  it("lê os meses da aba 'DRE' mesmo sem selectedSheet, num arquivo com 15 abas — simula Bella Gula", () => {
+    const buf = gerarFixtureDreMuitasAbas();
+    // Igual ao caller real (server/routers/orcamento.ts): NUNCA passa selectedSheet.
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26 BGP (AZM).xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-01", "2026-02", "2026-03"]);
+    expect(gruposPorMes[0].grupos["1"]).toBe(500000);
+  });
+});
+
+/**
+ * Simula um DRE ORÇAMENTÁRIO anual (ex.: "DRE Ano26"): tem coluna pra TODOS
+ * os 12 meses do ano, mas jul/ago/set (últimos com execução real) vêm
+ * preenchidos e out/nov/dez (futuro, ainda sem execução) vêm com todos os
+ * grupos ZERADOS — não ausentes, zerados mesmo (como no arquivo real da
+ * Bella Gula). "Últimos 3 meses" tem que pular essa cauda zerada.
+ */
+function gerarFixtureDreComCaudaZerada(): Buffer {
+  const header: (string | number)[] = ["Bella Gula"];
+  const linhaReceita: (string | number)[] = ["1 - Receita Bruta"];
+  const linhaCmv: (string | number)[] = ["4 - Custo de Mercadoria"];
+  const meses = ["Jul-26", "Aug-26", "Sep-26", "Oct-26", "Nov-26", "Dec-26"];
+  for (let i = 0; i < meses.length; i++) {
+    header.push(meses[i], "%", "");
+    const temDado = i < 3; // jul/ago/set com dado; out/nov/dez zerados (futuro)
+    linhaReceita.push(temDado ? `R$ ${500000 + i * 10000},00`.replace(",00", ",00") : "R$ -", "100,0%", "");
+    linhaCmv.push(temDado ? "-R$ 150.000,00" : "R$ -", "30,0%", "");
+  }
+  const aoa: (string | number)[][] = [header, linhaReceita, linhaCmv];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — cauda de meses futuros zerados (orçamento anual) é ignorada (Task S6)", () => {
+  it("'últimos 3 meses' pula out/nov/dez zerados e devolve jul/ago/set (último histórico real)", () => {
+    const buf = gerarFixtureDreComCaudaZerada();
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26.xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-07", "2026-08", "2026-09"]);
+    expect(gruposPorMes.every(m => m.grupos["1"] > 0)).toBe(true);
+  });
+});
+
+describe("extrairGruposPorMes — cabeçalho de mês em serial de data do Excel (Task S6)", () => {
+  it("lê os 3 meses quando o cabeçalho vem como serial (46023/46054/46082) em vez de texto — simula Bella Gula", () => {
+    const buf = gerarFixtureDreSerial();
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26 BGP (AZM).xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-01", "2026-02", "2026-03"]);
+
+    const [jan, fev, mar] = gruposPorMes;
+    expect(jan.grupos["1"]).toBe(500000);
+    expect(jan.grupos["4"]).toBe(-150000);
+    expect(jan.grupos["7"]).toBe(-120000);
+    expect(fev.grupos["1"]).toBe(520000);
+    expect(mar.grupos["1"]).toBe(540000);
+  });
+});
+
 describe("extrairGruposPorMes", () => {
   it("lê os grupos nível-1 dos últimos 3 meses (default) da fixture F360", () => {
     const buf = gerarFixtureDre();
