@@ -18,7 +18,7 @@ try {
 
   if (meses.length === 0) { console.log("Nenhum mês extraído."); process.exit(0); }
 
-  const linhas = proporLinhas(meses);
+  const { linhas, anoMeses } = proporLinhas(meses);
   console.log(`\nÁRVORE COMPLETA DA DRE — ${linhas.length} linhas\n`);
   console.log("codigo".padEnd(8), "label".padEnd(40), "nivel", "natureza".padEnd(10), "histMedia");
   console.log("-".repeat(100));
@@ -34,6 +34,32 @@ try {
       l.natureza.padEnd(10),
       valorFmt,
     );
+  }
+
+  // ─── Validação ao vivo (Task "3 meses"): dump dos 3 MESES SEPARADOS +
+  // média, para algumas linhas (receita bruta, CMV, uma de ocupação) —
+  // confirma que `porMes` vem alinhado a `anoMeses` e NUNCA chuta (null =
+  // sem base naquele mês).
+  const fmtValor = (v: number | null) =>
+    v !== null ? v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "(sem dado)";
+
+  console.log("\n─── 3 MESES SEPARADOS + MÉDIA (porMes / anoMeses) ───");
+  console.log("anoMeses:", anoMeses.join(", "));
+
+  const REGEX_RECEITA_BRUTA = /receita\s+bruta|receita\s+loja/i;
+  const REGEX_CMV = /custo.*mercadoria|cmv/i;
+  const linhasAlvo = [
+    linhas.find((l) => REGEX_RECEITA_BRUTA.test(l.label)),
+    linhas.find((l) => REGEX_CMV.test(l.label)),
+    linhas.find((l) => l.nivel === 1 && /ocupa/i.test(l.label)),
+  ].filter((l): l is NonNullable<typeof l> => !!l);
+
+  for (const l of linhasAlvo) {
+    console.log(`\n${l.codigo} - ${l.label}`);
+    anoMeses.forEach((am, i) => {
+      console.log(`  ${am}: ${fmtValor(l.porMes[i])}`);
+    });
+    console.log(`  média (histMedia/proposto): ${fmtValor(l.histMedia)}`);
   }
 
   // ─── Validação ao vivo (Task L3): calcularResumoLinhas vs a linha

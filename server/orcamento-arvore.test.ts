@@ -108,7 +108,7 @@ describe("extrairArvoreDre", () => {
 describe("proporLinhas", () => {
   const buf = gerarFixtureArvore();
   const meses: MesArvore[] = extrairArvoreDre(buf, "loja-x.xlsx", undefined, 3);
-  const linhas = proporLinhas(meses);
+  const { linhas, anoMeses } = proporLinhas(meses);
 
   it("preserva a ordem da DRE", () => {
     expect(linhas.map(l => l.codigo)).toEqual([
@@ -155,5 +155,19 @@ describe("proporLinhas", () => {
     const l = linhas.find(l => l.codigo === "20")!;
     expect(l.histMedia).toBeNull();
     expect(l.proposto).toBeNull();
+  });
+
+  it("devolve `anoMeses` alinhado aos meses lidos, na ordem cronológica", () => {
+    expect(anoMeses).toEqual(["2026-01", "2026-02", "2026-03"]);
+  });
+
+  it("'10.1 - Aluguel' → porMes com os 3 valores separados (alinhados a anoMeses), NÃO só a média", () => {
+    const l = linhas.find(l => l.codigo === "10.1")!;
+    expect(l.porMes).toEqual([-20000, -20500, -21000]);
+  });
+
+  it("'20 - Despesa Fantasma' (sem valor em nenhum mês) → porMes = [null, null, null]", () => {
+    const l = linhas.find(l => l.codigo === "20")!;
+    expect(l.porMes).toEqual([null, null, null]);
   });
 });

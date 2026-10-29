@@ -100,6 +100,7 @@ describe("orcamento.importarDoSharePoint", () => {
     parcial: false,
   };
   const linhasFake = [{ codigo: "1", label: "Receita Bruta", nivel: 1 }] as any;
+  const anoMesesFake = ["2026-09"];
   const resumoFake = { receitaBruta: 700000, ebitda: 100000, ebitdaPct: 0.14, metaDiaria: 23333, pontoEquilibrio: 500000, parcial: false };
 
   beforeEach(() => {
@@ -118,7 +119,7 @@ describe("orcamento.importarDoSharePoint", () => {
     (proporOrcamento as any).mockReturnValue(rascunhoFake);
     (calcularDre as any).mockReturnValue(dreFake);
     (extrairArvoreDre as any).mockReturnValue([{ anoMes: "2026-09", linhas: [] }]);
-    (proporLinhas as any).mockReturnValue(linhasFake);
+    (proporLinhas as any).mockReturnValue({ linhas: linhasFake, anoMeses: anoMesesFake });
     (calcularResumoLinhas as any).mockReturnValue(resumoFake);
   });
 
@@ -176,6 +177,7 @@ describe("orcamento.importarDoSharePoint", () => {
       dre: dreFake,
       linhas: linhasFake,
       resumo: resumoFake,
+      anoMeses: anoMesesFake,
       fonte: { nome: spFile.name, data: spFile.lastModifiedDateTime },
     });
   });
@@ -237,6 +239,7 @@ describe("orcamento.importarDoSharePoint", () => {
       dre: dreFake,
       linhas: linhasFake,
       resumo: resumoFake,
+      anoMeses: anoMesesFake,
       fonte: { nome: spFileArquivo.name, data: spFileArquivo.lastModifiedDateTime },
     });
   });
@@ -280,6 +283,7 @@ describe("orcamento.importarDoSharePoint", () => {
       dre: dreFake,
       linhas: linhasFake,
       resumo: resumoFake,
+      anoMeses: anoMesesFake,
       fonte: { nome: spFile.name, data: spFile.lastModifiedDateTime },
     });
     expect(getStoresByUserId).not.toHaveBeenCalled();
