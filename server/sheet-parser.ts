@@ -57,9 +57,23 @@ export function parseNumeroBR(v: unknown): number {
   return isNaN(n) ? 0 : n;
 }
 
+/**
+ * Converte um JS Date (epoch 1899-12-30, mesma base do Excel) de volta para o
+ * serial numérico de data do Excel. Necessário porque `raw:true` + workbook
+ * lido com `cellDates:true` devolve `Date` para células de data (`t:"d"` ou
+ * `t:"n"` formatada como data) em vez do serial numérico — e o detector de
+ * cabeçalho de mês (`isMesHeaderCell`/`parseMesLabel`, Task S6) só reconhece
+ * number/string, não `Date`. Sem isto, `rawNumbers:true` quebraria a detecção
+ * de mês em arquivos reais (ex. Bella Gula) cujo cabeçalho é data do Excel.
+ */
+function excelSerialFromDate(d: Date): number {
+  return Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000);
+}
+
 /** Normaliza número pt-BR: "1.234,56" → 1234.56 */
 function normalizePtBR(v: unknown): string | number | null {
   if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return excelSerialFromDate(v);
   if (typeof v === "number") return v;
   if (typeof v === "boolean") return v ? 1 : 0;
   const s = String(v).trim();
@@ -76,11 +90,20 @@ function normalizePtBR(v: unknown): string | number | null {
  * @param source base64 string ou Buffer do arquivo
  * @param fileName nome original do arquivo (para detectar extensão)
  * @param selectedSheets abas a incluir (undefined = todas, se ≤ 5)
+ * @param opts.rawNumbers quando `true`, lê células numéricas (`t=n`) com
+ *   `raw:true` — devolve `cell.v` (o número cru) em vez de `cell.w` (texto
+ *   formatado para exibição). Corrige o bug de escala em DREs cujas células
+ *   são formatadas em padrão US (`.w=" 599,814.61 "`): com `raw:false`,
+ *   `normalizePtBR` assumia pt-BR e removia o ponto decimal, gerando valores
+ *   ~1000x menores (Task S7). Default `false` — preserva o comportamento
+ *   atual (texto formatado pt-BR) para produtos/checklist, que dependem de
+ *   `normalizePtBR` interpretar strings como "1.234,56".
  */
 export function parseSpreadsheetToGrid(
   source: string | Buffer,
   fileName: string,
-  selectedSheets?: string[]
+  selectedSheets?: string[],
+  opts?: { rawNumbers?: boolean }
 ): SpreadsheetParseResult {
   let workbook: XLSX.WorkBook;
 
@@ -132,7 +155,11 @@ export function parseSpreadsheetToGrid(
     const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
       defval: null,
-      raw: false, // retorna strings formatadas para preservar pt-BR
+      // raw:false (default) retorna strings formatadas (.w) para preservar
+      // pt-BR em produtos/checklist. raw:true (opts.rawNumbers) retorna o
+      // valor cru (.v) das células numéricas — necessário para DREs com
+      // formatação de exibição em padrão US (Task S7).
+      raw: opts?.rawNumbers === true,
     });
 
     const totalRows = rawRows.length;

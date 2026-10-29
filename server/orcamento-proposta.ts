@@ -99,7 +99,11 @@ export function extrairGruposPorMes(
   selectedSheet?: string,
   meses: number = DEFAULT_MESES,
 ): GrupoDreMes[] {
-  let parsed = parseSpreadsheetToGrid(fileBuffer, fileName, selectedSheet ? [selectedSheet] : undefined);
+  // rawNumbers:true — usa o valor CRU da célula (cell.v) em vez do texto
+  // formatado (cell.w). Corrige DREs com células formatadas em padrão US
+  // (".w"=" 599,814.61 "): sem isto, normalizePtBR assume pt-BR e devolve um
+  // valor ~1000x menor (Task S7).
+  let parsed = parseSpreadsheetToGrid(fileBuffer, fileName, selectedSheet ? [selectedSheet] : undefined, { rawNumbers: true });
 
   // Arquivos reais de DRE costumam ter 1 aba por mês (JAN26, FEV26...) além
   // da aba "DRE" — isso facilmente passa de MAX_AUTO_SHEETS (5), e
@@ -111,7 +115,7 @@ export function extrairGruposPorMes(
   if (parsed.needsSheetSelection) {
     const abaPorNome = parsed.sheetNames.find(n => n.trim().toUpperCase() === "DRE");
     if (!abaPorNome) return [];
-    parsed = parseSpreadsheetToGrid(fileBuffer, fileName, [abaPorNome]);
+    parsed = parseSpreadsheetToGrid(fileBuffer, fileName, [abaPorNome], { rawNumbers: true });
     if (parsed.needsSheetSelection) return [];
   }
 

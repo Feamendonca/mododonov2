@@ -104,6 +104,60 @@ function gerarFixtureDreMuitasAbas(): Buffer {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+/**
+ * Simula o bug real cravado ao vivo na Bella Gula (Task S7): as células de
+ * VALOR na aba "DRE" não são texto pt-BR — são células numéricas (t:"n")
+ * cujo valor cru (.v) é o número certo, mas a FORMATAÇÃO DE EXIBIÇÃO (.z) é
+ * padrão US (vírgula=milhar, ponto=decimal), produzindo .w=" 599,814.61 ".
+ * `aoa_to_sheet` com string literal ("R$ 500.000,00") NÃO reproduz isto —
+ * precisa de célula numérica real com `z` definido, por isso a construção
+ * manual de células abaixo (igual ao fixture de sheet-parser.test.ts).
+ */
+function gerarFixtureDreFormatoUS(): Buffer {
+  const ws: XLSX.WorkSheet = {};
+  const linhas: { desc: string; valores: number[] }[] = [
+    { desc: "1 - Receita Bruta", valores: [550000.1, 560000.2, 574285.61] },
+    { desc: "4 - Custo de Mercadoria", valores: [-170000.3, -175000.4, -180000.5] },
+    { desc: "7 - Colaboradores", valores: [-120000, -125000, -130000] },
+  ];
+  // Linha 1: cabeçalho — "Bella Gula" + 3 blocos (mês | % | vazio), mês como texto pt-BR.
+  ws["A1"] = { t: "s", v: "Bella Gula" };
+  const meses = ["jan/26", "fev/26", "mar/26"];
+  meses.forEach((m, i) => {
+    const col = 1 + i * 3; // B, E, H...
+    ws[XLSX.utils.encode_cell({ r: 0, c: col })] = { t: "s", v: m };
+    ws[XLSX.utils.encode_cell({ r: 0, c: col + 1 })] = { t: "s", v: "%" };
+  });
+  // Linhas de dado: célula de valor numérica formatada em padrão US.
+  linhas.forEach((linha, rIdx) => {
+    const row = rIdx + 1;
+    ws[XLSX.utils.encode_cell({ r: row, c: 0 })] = { t: "s", v: linha.desc };
+    linha.valores.forEach((v, i) => {
+      const col = 1 + i * 3;
+      ws[XLSX.utils.encode_cell({ r: row, c: col })] = { t: "n", v, z: "#,##0.00" };
+    });
+  });
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: linhas.length, c: 9 } });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — células de valor formatadas em padrão US (Task S7)", () => {
+  it("lê o valor CRU (574285.61), não o ~1000x menor produzido por normalizePtBR em texto US", () => {
+    const buf = gerarFixtureDreFormatoUS();
+    const gruposPorMes = extrairGruposPorMes(buf, "dre_bgp.xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    const [jan, fev, mar] = gruposPorMes;
+    expect(jan.grupos["1"]).toBeCloseTo(550000.1, 2);
+    expect(fev.grupos["1"]).toBeCloseTo(560000.2, 2);
+    expect(mar.grupos["1"]).toBeCloseTo(574285.61, 2);
+    expect(mar.grupos["4"]).toBeCloseTo(-180000.5, 2);
+    expect(mar.grupos["7"]).toBeCloseTo(-130000, 2);
+  });
+});
+
 describe("extrairGruposPorMes — arquivo com muitas abas (>5), aba 'DRE' resolvida por nome (Task S6)", () => {
   it("lê os meses da aba 'DRE' mesmo sem selectedSheet, num arquivo com 15 abas — simula Bella Gula", () => {
     const buf = gerarFixtureDreMuitasAbas();

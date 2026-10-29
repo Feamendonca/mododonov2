@@ -263,6 +263,79 @@ describe("parseSpreadsheetToGrid", () => {
   });
 });
 
+// ─── 3b. parseSpreadsheetToGrid — rawNumbers (correção escala US vs pt-BR, Task S7) ──
+// Repro ao vivo confirmada: na aba "DRE" real (Bella Gula), as células de
+// valor são t=n (número) com v=599814.61 (cru, correto) e w=" 599,814.61 "
+// (texto formatado em padrão US — vírgula=milhar, ponto=decimal). Com
+// raw:false (default), o leitor pega o .w e normalizePtBR ASSUME pt-BR
+// (remove o ponto) → ~1000x menor. rawNumbers:true usa o .v cru.
+
+/** Constrói um .xlsx com uma célula numérica cujo .w fica formatado em padrão US. */
+function makeUsFormattedXlsx(value: number, label = "Receita Bruta"): Buffer {
+  const wb = XLSX.utils.book_new();
+  const ws: XLSX.WorkSheet = {};
+  ws["A1"] = { t: "s", v: label };
+  ws["B1"] = { t: "n", v: value, z: "#,##0.00" };
+  ws["!ref"] = "A1:B1";
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("parseSpreadsheetToGrid — rawNumbers (Task S7)", () => {
+  it("com rawNumbers:true, devolve o valor numérico CRU (599814.61), não o texto formatado US mal-interpretado", () => {
+    const buf = makeUsFormattedXlsx(599814.61);
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    expect(result.sheets[0].rows[0].cells[1]).toBe(599814.61);
+  });
+
+  it("documenta o bug: sem rawNumbers (default), o mesmo arquivo formatado US sai ~1000x menor", () => {
+    const buf = makeUsFormattedXlsx(599814.61);
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx");
+    // .w=" 599,814.61 " é lido como texto; normalizePtBR assume pt-BR
+    // (remove o ponto de "milhar") → 599.81461, não 599814.61.
+    expect(result.sheets[0].rows[0].cells[1]).not.toBe(599814.61);
+    expect(result.sheets[0].rows[0].cells[1]).toBeCloseTo(599.81461, 3);
+  });
+
+  it("rawNumbers:true não quebra célula de DATA do Excel usada como cabeçalho de mês (vira Date sob raw:true+cellDates — precisa reconverter para serial)", () => {
+    const wb = XLSX.utils.book_new();
+    const ws: XLSX.WorkSheet = {};
+    // Cabeçalho "jan/26" como serial de data do Excel (46023), formatado "mmm-yy"
+    ws["A1"] = { t: "n", v: 46023, z: "mmm-yy" };
+    ws["B1"] = { t: "n", v: 599814.61, z: "#,##0.00" };
+    ws["!ref"] = "A1:B1";
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    const headerCell = result.sheets[0].rows[0].cells[0];
+    expect(parseMesLabel(headerCell as string | number)).toBe("2026-01");
+    // E o valor ao lado continua correto
+    expect(result.sheets[0].rows[0].cells[1]).toBe(599814.61);
+  });
+
+  it("rawNumbers:true não quebra célula t='d' (Date real do Excel) usada como cabeçalho de mês", () => {
+    const wb = XLSX.utils.book_new();
+    const ws: XLSX.WorkSheet = {};
+    ws["A1"] = { t: "d", v: new Date(Date.UTC(2026, 0, 1)), z: "mmm-yy" };
+    ws["!ref"] = "A1:A1";
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    const headerCell = result.sheets[0].rows[0].cells[0];
+    expect(parseMesLabel(headerCell as string | number)).toBe("2026-01");
+  });
+
+  it("default (sem opts) continua lendo normalmente — não quebra chamadas existentes", () => {
+    const rows = [
+      ["Produto", "Custo"],
+      ["Filé Mignon", "1.234,56"],
+    ];
+    const buf = makeXlsxBuffer(rows);
+    const result = parseSpreadsheetToGrid(buf, "teste.xlsx");
+    expect(result.sheets[0].rows[1].cells[1]).toBe(1234.56);
+  });
+});
+
 // ─── 4. parseChecklistSheet — checklist ──────────────────────────────────────
 
 describe("parseChecklistSheet", () => {
