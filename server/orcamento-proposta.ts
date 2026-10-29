@@ -6,9 +6,11 @@
  * Decisão de projeto (ver task-3-brief.md): NÃO usa `DreHistoricoMes.ebitda`
  * (soma dupla) nem os baldes agregados `custosFixos/custosVariaveis`
  * (sheet-parser.ts CATEGORIA_MAP) — grossos demais. Em vez disso, lê os
- * TOTAIS DOS GRUPOS NÍVEL-1 por mês (linhas "N - Nome", N=1..15, ver
- * docs/superpowers/specs/2026-10-27-dre-f360-formato-referencia.md) e mapeia
- * cada grupo pro campo de `orcamentos` conforme a referência. EBITDA é
+ * TOTAIS DOS GRUPOS NÍVEL-1 por mês (linhas "N - Nome", ver
+ * docs/superpowers/specs/2026-10-27-dre-f360-formato-referencia.md) e
+ * classifica cada grupo numa CATEGORIA CANÔNICA derivada do NOME da linha
+ * (Task S8 — NUNCA pelo número "N": a numeração difere por template de DRE,
+ * ex. "folha" é o grupo 7 no Agrobar mas o grupo 8 na Bella Gula). EBITDA é
  * CALCULADO pelos componentes (calcularDre), nunca lido pronto da planilha.
  *
  * Regra dura: campo sem base no histórico = `null`. NUNCA `?? default` nem
@@ -17,12 +19,83 @@
 
 import { parseSpreadsheetToGrid, cellToNumberDre, parseMesLabel, type SheetGrid } from "./sheet-parser";
 
+// ─── classificação por CATEGORIA (Task S8) ─────────────────────────────────────
+//
+// O achado-chave (ver task-s8-brief.md): a NUMERAÇÃO dos grupos nível-1 difere
+// por template de DRE — ex.: "folha" é o grupo 7 no Agrobar, mas o grupo 8 na
+// Bella Gula (onde o grupo 7 é "MARGEM BRUTA", um SUBTOTAL). Chavear por
+// número pega a linha errada em arquivos com numeração diferente da
+// referência. O fix: classificar cada linha nível-1 por uma CATEGORIA
+// CANÔNICA derivada do NOME (regex tolerante a acento/caixa), nunca pelo
+// número da linha.
+
+export type CategoriaDre =
+  | "receitaBruta"
+  | "redutores"
+  | "cmv"
+  | "impostos"
+  | "franquias" // royalties + fundo de promoção
+  | "folha" // colaboradores/pessoal
+  | "despesasOperacionais"
+  | "terceiros" // serviços de terceiros + terceiros eventuais
+  | "ocupacao" // ocupação + utilidades
+  | "financeiras"
+  | "outras"
+  | "proLabore";
+
+/**
+ * Linhas DERIVADAS (subtotais calculados pela própria planilha) — NUNCA
+ * entram numa categoria, independente do número que carregam. Ex.: no
+ * Agrobar o grupo 12 é "Lucro Operacional"; na Bella Gula o grupo 7 é
+ * "MARGEM BRUTA" (também um subtotal, só que numerado como se fosse um
+ * grupo normal). Testada ANTES das categorias — "Lucro Operacional" não
+ * pode cair em nenhuma categoria por acidente.
+ */
+const REGEX_DERIVADA = /receita\s+l[íi]quida|margem\s+bruta|resultado|lucro|ebitda/i;
+
+// Ordem importa só por clareza — nenhuma das regex abaixo colide com outra
+// (cada uma exige um termo específico que não aparece nas demais linhas).
+const CATEGORIA_REGEX: [CategoriaDre, RegExp][] = [
+  ["receitaBruta", /receita\s+bruta|receita\s+loja/i],
+  ["redutores", /redutor|taxa\s+de\s+servi/i],
+  ["cmv", /custo.*mercadoria|cmv/i],
+  ["impostos", /imposto|tributo/i],
+  ["franquias", /franquia|royalt/i],
+  ["folha", /colaborador|folha|pessoal|m[ãa]o.de.obra/i],
+  ["despesasOperacionais", /despesa.*operac/i],
+  ["terceiros", /terceiro/i],
+  ["ocupacao", /ocupa[çc][ãa]o|utilidade/i],
+  ["financeiras", /financeir/i],
+  ["outras", /outras\s+despesas/i],
+  ["proLabore", /pr[óo].?labore/i],
+];
+
+/**
+ * Classifica a descrição de uma linha nível-1 ("N - Nome") numa categoria
+ * canônica pelo NOME. Devolve `null` para linhas derivadas (subtotais) ou
+ * sem categoria reconhecida — nesse caso a linha é IGNORADA (nunca entra
+ * em nenhum campo por acidente).
+ */
+export function classificarCategoriaDre(desc: string): CategoriaDre | null {
+  if (REGEX_DERIVADA.test(desc)) return null;
+  for (const [categoria, regex] of CATEGORIA_REGEX) {
+    if (regex.test(desc)) return categoria;
+  }
+  return null;
+}
+
 // ─── extrairGruposPorMes ──────────────────────────────────────────────────────
 
 export interface GrupoDreMes {
   anoMes: string; // "YYYY-MM"
-  /** Chaveado pelo código nível-1 ("1".."15") → total R$ do mês (negativo = despesa). */
-  grupos: Record<string, number>;
+  /**
+   * Chaveado pela CATEGORIA canônica (derivada do NOME da linha, não do
+   * número — Task S8) → total R$ do mês (negativo = despesa). Quando a
+   * mesma categoria aparece em mais de uma linha nível-1 no mesmo mês (ex.:
+   * "Serviços de Terceiros" + "Terceiros Eventuais" → ambas "terceiros"),
+   * os valores são SOMADOS.
+   */
+  cats: Partial<Record<CategoriaDre, number>>;
 }
 
 const DEFAULT_MESES = 3;
@@ -125,7 +198,7 @@ export function extrairGruposPorMes(
   const { headerRowIdx, colunas } = detectarColunasDeMes(sheet);
   if (headerRowIdx === -1 || colunas.length === 0) return [];
 
-  const porMes: Record<string, Record<string, number>> = {};
+  const porMes: Record<string, Partial<Record<CategoriaDre, number>>> = {};
   for (const col of colunas) porMes[col.anoMes] = {};
 
   for (let i = headerRowIdx + 1; i < sheet.rows.length; i++) {
@@ -135,16 +208,25 @@ export function extrairGruposPorMes(
     const match = desc.match(REGEX_GRUPO_NIVEL1);
     if (!match) continue; // sub-linha (N.M) ou ruído — ignora
 
-    const codigo = match[1];
+    // Task S8: classifica pela CATEGORIA derivada do NOME, nunca pelo
+    // número — o número de cada grupo nível-1 difere por template (ver
+    // comentário de CATEGORIA_REGEX). Linha derivada (subtotal) ou sem
+    // categoria reconhecida → ignora a linha inteira.
+    const categoria = classificarCategoriaDre(desc);
+    if (!categoria) continue;
+
     for (const col of colunas) {
       const valor = cellToNumberDre(cells[col.colIdx]);
       if (valor === null) continue;
-      porMes[col.anoMes][codigo] = valor;
+      const mes = porMes[col.anoMes];
+      // SOMA quando a mesma categoria já apareceu noutra linha nível-1 do
+      // mesmo mês (ex.: "Serviços de Terceiros" + "Terceiros Eventuais").
+      mes[categoria] = (mes[categoria] ?? 0) + valor;
     }
   }
 
   let todos: GrupoDreMes[] = Object.entries(porMes)
-    .map(([anoMes, grupos]) => ({ anoMes, grupos }))
+    .map(([anoMes, cats]) => ({ anoMes, cats }))
     .sort((a, b) => a.anoMes.localeCompare(b.anoMes));
 
   // DRE orçamentário real (ex.: "DRE Ano26") tem coluna pra TODOS os 12
@@ -153,16 +235,16 @@ export function extrairGruposPorMes(
   // senão a "foto" devolvida é zero em vez do último histórico real
   // (mesmo princípio do mês-base em extractDreContext). Só corta do FIM pra
   // trás — nunca remove um mês real no meio da série (Task S6).
-  while (todos.length > 0 && !temGrupoComDadoReal(todos[todos.length - 1].grupos)) {
+  while (todos.length > 0 && !temGrupoComDadoReal(todos[todos.length - 1].cats)) {
     todos = todos.slice(0, -1);
   }
 
   return todos.slice(-meses);
 }
 
-/** true quando ALGUM grupo nível-1 do mês tem valor ≠ 0 (mês com execução real, não só orçado/zerado). */
-function temGrupoComDadoReal(grupos: Record<string, number>): boolean {
-  return Object.values(grupos).some(v => v !== 0);
+/** true quando ALGUMA categoria do mês tem valor ≠ 0 (mês com execução real, não só orçado/zerado). */
+function temGrupoComDadoReal(cats: Partial<Record<CategoriaDre, number>>): boolean {
+  return Object.values(cats).some(v => v !== 0);
 }
 
 // ─── proporOrcamento ──────────────────────────────────────────────────────────
@@ -207,28 +289,47 @@ function media(valores: number[]): number | null {
 }
 
 /**
+ * Categorias de despesa que entram no RESULTADO OPERACIONAL (ver
+ * `emAtencao`). `proLabore` fica de fora — igual à referência F360, onde o
+ * grupo de pró-labore vem DEPOIS da linha de "Lucro Operacional".
+ */
+const CATEGORIAS_CUSTO: CategoriaDre[] = [
+  "cmv",
+  "impostos",
+  "franquias",
+  "folha",
+  "despesasOperacionais",
+  "terceiros",
+  "ocupacao",
+  "financeiras",
+  "outras",
+];
+
+/**
  * Monta um RASCUNHO de orçamento por média/tendência dos últimos meses,
- * mapeando os grupos nível-1 da DRE para os campos de `orcamentos` conforme
+ * mapeando as CATEGORIAS canônicas da DRE (Task S8 — derivadas do NOME da
+ * linha, nunca do número) para os campos de `orcamentos` conforme
  * docs/superpowers/specs/2026-10-27-dre-f360-formato-referencia.md.
  *
- * Decisões de mapeamento (grupos sem sub-linha nível 2 disponível em
+ * Decisões de mapeamento (categorias sem sub-linha nível 2 disponível em
  * `GrupoDreMes`, logo impossível separar sem chutar):
- *   - Grupo 6 "Taxa Mensal Franquias" (Royalties + Fundo de Promoção) → o
- *     total vai inteiro pra `royaltiesPct`; `fundoMarketingPct` fica `null`
- *     (não há base pra saber quanto é royalty e quanto é fundo).
- *   - Grupo 10 "Custo de Ocupação" (Aluguel+Condomínio+IPTU+Seguro+Gás+
- *     Energia+Água) → o total vai inteiro pra `aluguel` (maior componente
- *     nomeado do grupo); `condominio/energia/gas/agua/outrosOcupacao` ficam
- *     `null`.
- *   - Grupo 8 "Serviços de Terceiros" → `outrosServicos`; `contabilidade` e
- *     `sistemas` ficam `null` (sem sub-linha pra separar).
- *   - Grupo 9 "Terceiros Eventuais" → `outrasDespesas`; `marketing` fica
- *     `null`.
- *   - Grupo 11 "Despesas Financeiras" (dominado por taxas de cartão) → % da
- *     receita em `taxaCartaoPct`; `juros`/`tarifasBancarias` ficam `null`.
- *   - Grupo 13 "Pró-labore/Distribuição" → `proLabore` (R$ médio).
- *   - Grupos 2/3/12/14/15 não são lidos (redutor/derivados/não-operacional —
- *     fora do escopo desta proposta; EBITDA é recalculado pelos componentes).
+ *   - `franquias` (Royalties + Fundo de Promoção) → o total vai inteiro pra
+ *     `royaltiesPct`; `fundoMarketingPct` fica `null` (não há base pra saber
+ *     quanto é royalty e quanto é fundo).
+ *   - `ocupacao` (Aluguel+Condomínio+IPTU+Seguro+Gás+Energia+Água+
+ *     Utilidades) → o total vai inteiro pra `aluguel` (maior componente
+ *     nomeado); `condominio/energia/gas/agua/outrosOcupacao` ficam `null`.
+ *   - `terceiros` (Serviços de Terceiros + Terceiros Eventuais, já SOMADOS
+ *     na mesma categoria por `extrairGruposPorMes`) → `outrosServicos`;
+ *     `contabilidade`/`sistemas` ficam `null` (sem sub-linha pra separar).
+ *   - `despesasOperacionais` + `outras` (buckets genéricos sem campo
+ *     dedicado) → somados em `outrasDespesas`; `marketing` fica `null`.
+ *   - `financeiras` (dominada por taxas de cartão) → % da receita em
+ *     `taxaCartaoPct`; `juros`/`tarifasBancarias` ficam `null`.
+ *   - `proLabore` → `proLabore` (R$ médio).
+ *   - `redutores` não é lido como campo (fora do escopo desta proposta; só
+ *     entra no cálculo de receita líquida pro `emAtencao`). EBITDA é
+ *     recalculado pelos componentes, nunca lido pronto de uma linha derivada.
  *
  * Todo campo sem NENHUM mês com dado vira `null` — nunca 0, nunca benchmark.
  */
@@ -245,36 +346,36 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
   const proLaborePorMes: number[] = [];
 
   for (const mes of gruposPorMes) {
-    const receita = mes.grupos["1"];
+    const receita = mes.cats.receitaBruta;
     const temReceita = typeof receita === "number" && receita !== 0;
     if (typeof receita === "number") receitaBrutaPorMes.push(receita);
 
-    if (temReceita && typeof mes.grupos["4"] === "number") {
-      cmvPctPorMes.push(Math.abs(mes.grupos["4"]) / receita);
+    if (temReceita && typeof mes.cats.cmv === "number") {
+      cmvPctPorMes.push(Math.abs(mes.cats.cmv) / receita);
     }
-    if (temReceita && typeof mes.grupos["5"] === "number") {
-      impostosPctPorMes.push(Math.abs(mes.grupos["5"]) / receita);
+    if (temReceita && typeof mes.cats.impostos === "number") {
+      impostosPctPorMes.push(Math.abs(mes.cats.impostos) / receita);
     }
-    if (temReceita && typeof mes.grupos["6"] === "number") {
-      royaltiesPctPorMes.push(Math.abs(mes.grupos["6"]) / receita);
+    if (temReceita && typeof mes.cats.franquias === "number") {
+      royaltiesPctPorMes.push(Math.abs(mes.cats.franquias) / receita);
     }
-    if (typeof mes.grupos["7"] === "number") {
-      folhaPorMes.push(Math.abs(mes.grupos["7"]));
+    if (typeof mes.cats.folha === "number") {
+      folhaPorMes.push(Math.abs(mes.cats.folha));
     }
-    if (typeof mes.grupos["8"] === "number") {
-      outrosServicosPorMes.push(Math.abs(mes.grupos["8"]));
+    if (typeof mes.cats.terceiros === "number") {
+      outrosServicosPorMes.push(Math.abs(mes.cats.terceiros));
     }
-    if (typeof mes.grupos["9"] === "number") {
-      outrasDespesasPorMes.push(Math.abs(mes.grupos["9"]));
+    if (typeof mes.cats.despesasOperacionais === "number" || typeof mes.cats.outras === "number") {
+      outrasDespesasPorMes.push(Math.abs(mes.cats.despesasOperacionais ?? 0) + Math.abs(mes.cats.outras ?? 0));
     }
-    if (typeof mes.grupos["10"] === "number") {
-      aluguelPorMes.push(Math.abs(mes.grupos["10"]));
+    if (typeof mes.cats.ocupacao === "number") {
+      aluguelPorMes.push(Math.abs(mes.cats.ocupacao));
     }
-    if (temReceita && typeof mes.grupos["11"] === "number") {
-      taxaCartaoPctPorMes.push(Math.abs(mes.grupos["11"]) / receita);
+    if (temReceita && typeof mes.cats.financeiras === "number") {
+      taxaCartaoPctPorMes.push(Math.abs(mes.cats.financeiras) / receita);
     }
-    if (typeof mes.grupos["13"] === "number") {
-      proLaborePorMes.push(Math.abs(mes.grupos["13"]));
+    if (typeof mes.cats.proLabore === "number") {
+      proLaborePorMes.push(Math.abs(mes.cats.proLabore));
     }
   }
 
@@ -282,22 +383,18 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
   const cmvPct = media(cmvPctPorMes);
   const folha = media(folhaPorMes);
 
-  // Resultado operacional de CADA mês = Receita Líquida + custos (grupos
-  // "4".."11", que já vêm negativos). Na DRE F360 real, grupo 3 "Receita
-  // Líquida" é DERIVADO (= grupo 1 Receita Bruta + grupo 2 Redutores) e vem
-  // preenchido no arquivo — então NUNCA somar o grupo 1 junto do 3 (dupla
-  // contagem da receita). Usa o grupo 3 quando presente; senão reconstrói por
-  // 1+2. Grupos 12/14 (Lucro Operacional / Resultado) são derivados e NUNCA
-  // entram. Grupo ausente contribui 0 — nunca chuta valor pro faltante. Mês
-  // sem NENHUM dado some do resultado (0), um mês "neutro".
+  // Resultado operacional de CADA mês = Receita Líquida + custos
+  // (categorias de CATEGORIAS_CUSTO, que já vêm negativas). Receita Líquida
+  // é SEMPRE reconstruída por receitaBruta + redutores — a linha "Receita
+  // Líquida" da planilha é DERIVADA (subtotal) e por isso NUNCA entra em
+  // `cats` (ver REGEX_DERIVADA): usá-la causaria dupla contagem de receita.
+  // Categoria ausente contribui 0 — nunca chuta valor pro faltante. Mês sem
+  // NENHUM dado some do resultado (0), um mês "neutro".
   const resultadosOperacionaisPorMes = gruposPorMes.map((mes) => {
-    const g3 = mes.grupos["3"];
-    const receitaLiq = typeof g3 === "number"
-      ? g3
-      : (mes.grupos["1"] ?? 0) + (mes.grupos["2"] ?? 0);
+    const receitaLiq = (mes.cats.receitaBruta ?? 0) + (mes.cats.redutores ?? 0);
     let soma = receitaLiq;
-    for (let codigo = 4; codigo <= 11; codigo++) {
-      const v = mes.grupos[String(codigo)];
+    for (const categoria of CATEGORIAS_CUSTO) {
+      const v = mes.cats[categoria];
       if (typeof v === "number") soma += v;
     }
     return soma;
@@ -314,7 +411,7 @@ export function proporOrcamento(gruposPorMes: GrupoDreMes[]): RascunhoOrcamento 
     cmvPct,
     impostosPct: media(impostosPctPorMes),
     royaltiesPct: media(royaltiesPctPorMes),
-    fundoMarketingPct: null, // grupo 6 agrega royalties+fundo — sem sub-linha, sem split possível
+    fundoMarketingPct: null, // categoria "franquias" agrega royalties+fundo — sem sub-linha, sem split possível
     folha,
     aluguel: media(aluguelPorMes),
     condominio: null,

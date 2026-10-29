@@ -45,10 +45,10 @@ Regras duras, sem exceção:
 function montarPromptUsuario(historico: GrupoDreMes[], rascunho: RascunhoOrcamento): string {
   const historicoTexto = historico
     .map((mes) => {
-      const grupos = Object.entries(mes.grupos)
-        .map(([codigo, valor]) => `  grupo ${codigo}: R$ ${valor.toFixed(2)}`)
+      const categorias = Object.entries(mes.cats)
+        .map(([categoria, valor]) => `  ${categoria}: R$ ${(valor as number).toFixed(2)}`)
         .join("\n");
-      return `Mês ${mes.anoMes}:\n${grupos}`;
+      return `Mês ${mes.anoMes}:\n${categorias}`;
     })
     .join("\n\n");
 
