@@ -14,6 +14,7 @@
  * ver report da Task 9.
  */
 import { useRef, useState } from "react";
+import { TRPCClientError } from "@trpc/client";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useStore } from "@/components/AppLayout";
@@ -22,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
   Upload, Sparkles, Loader2, CheckCircle2, AlertTriangle,
-  FileSpreadsheet, ThumbsUp, XCircle, Target,
+  FileSpreadsheet, ThumbsUp, XCircle, Target, Cloud,
 } from "lucide-react";
 import DreEditavel, { type SugestaoIA, type CamposParaSalvar } from "@/components/orcamento/DreEditavel";
 import type { RascunhoOrcamento, DreCalculada } from "../../../server/orcamento-proposta";
@@ -52,6 +53,29 @@ const CT_MAP: Record<string, string> = {
 
 const fmtBRL = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
+/** Formata uma data ISO (ou já YYYY-MM-DD) como dd/mm/aaaa, sem depender de timezone local. */
+function fmtDataBR(iso: string): string {
+  const soData = iso.slice(0, 10); // "YYYY-MM-DD" mesmo se vier com hora (ISO datetime)
+  const [anoStr, mesStr, diaStr] = soData.split("-");
+  if (!anoStr || !mesStr || !diaStr) return iso;
+  return `${diaStr}/${mesStr}/${anoStr}`;
+}
+
+/** Mensagem amigável para os erros conhecidos de `importarDoSharePoint`. */
+function mensagemErroSharepoint(err: unknown): string {
+  if (err instanceof TRPCClientError) {
+    const code = err.data?.code;
+    if (code === "PRECONDITION_FAILED") {
+      return "Esta loja ainda não tem a pasta de DRE configurada no SharePoint. Fale com o Fernando.";
+    }
+    if (code === "NOT_FOUND") {
+      return "Não encontrei uma DRE (.xlsx) na pasta desta loja.";
+    }
+    return "Erro ao puxar a DRE do SharePoint: " + err.message;
+  }
+  return "Erro ao puxar a DRE do SharePoint: " + (err instanceof Error ? err.message : String(err));
+}
+
 // ─── Página ──────────────────────────────────────────────────────────────────
 
 export default function OrcamentoPage() {
@@ -77,6 +101,7 @@ export default function OrcamentoPage() {
   const [sugestao, setSugestao] = useState<SugestaoIA | null>(null);
   const [orcamentoId, setOrcamentoId] = useState<number | null>(null);
   const [aprovado, setAprovado] = useState(false);
+  const [fonteSharepoint, setFonteSharepoint] = useState<{ nome: string; data: string } | null>(null);
 
   function resetRascunho() {
     setRascunho(null);
@@ -85,6 +110,7 @@ export default function OrcamentoPage() {
     setOrcamentoId(null);
     setAprovado(false);
     setFileName(null);
+    setFonteSharepoint(null);
   }
 
   function handleChangePeriodo(novoMes: number, novoAno: number) {
@@ -104,9 +130,24 @@ export default function OrcamentoPage() {
       setSugestao(null);
       setOrcamentoId(null);
       setAprovado(false);
+      setFonteSharepoint(null);
       toast.success("Proposta gerada a partir da DRE. Confira os valores abaixo.");
     },
     onError: (e) => toast.error("Erro ao ler a DRE: " + e.message),
+  });
+
+  const importarSpMut = trpc.orcamento.importarDoSharePoint.useMutation({
+    onSuccess: (data) => {
+      setRascunho(data.rascunho);
+      setDreInicial(data.dre);
+      setSugestao(null);
+      setOrcamentoId(null);
+      setAprovado(false);
+      setFileName(null);
+      setFonteSharepoint(data.fonte);
+      toast.success("DRE importada do SharePoint. Confira os valores abaixo.");
+    },
+    onError: (e) => toast.error(mensagemErroSharepoint(e)),
   });
 
   const sugestaoMut = trpc.orcamento.sugestaoIA.useMutation({
@@ -171,6 +212,11 @@ export default function OrcamentoPage() {
     }
   }
 
+  function handleImportarSharepoint() {
+    if (!storeId) { toast.error("Selecione uma loja antes de puxar a DRE."); return; }
+    importarSpMut.mutate({ storeId });
+  }
+
   function handleSugestaoIA() {
     if (!rascunho) return;
     sugestaoMut.mutate({ storeId, historico: [], rascunho });
@@ -193,6 +239,7 @@ export default function OrcamentoPage() {
   }
 
   const carregandoProposta = proporMut.isPending || uploading;
+  const carregandoSharepoint = importarSpMut.isPending;
   const prazoDecisao = rascunho?.emAtencao && rascunho.rampaMeses ? calcularPrazo(periodoInicio, rascunho.rampaMeses) : null;
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -250,14 +297,23 @@ export default function OrcamentoPage() {
           Suba a DRE da loja (Excel ou CSV) — a tela lê os últimos meses e já propõe os valores do orçamento.
         </p>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xlsm,.xlsb,.xls,.csv" className="hidden" onChange={handleFileChange} />
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
-            disabled={!storeId || carregandoProposta}
+            disabled={!storeId || carregandoProposta || carregandoSharepoint}
           >
             {carregandoProposta ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Upload size={14} className="mr-2" />}
             {uploading ? "Enviando arquivo..." : proporMut.isPending ? "Lendo a DRE..." : rascunho ? "Trocar DRE" : "Escolher arquivo"}
+          </Button>
+          <span className="text-xs" style={{ color: "var(--stone)" }}>ou</span>
+          <Button
+            variant="outline"
+            onClick={handleImportarSharepoint}
+            disabled={!storeId || carregandoProposta || carregandoSharepoint}
+          >
+            {carregandoSharepoint ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Cloud size={14} className="mr-2" />}
+            {carregandoSharepoint ? "Buscando a DRE no SharePoint…" : "Puxar do SharePoint"}
           </Button>
           {fileName && !carregandoProposta && (
             <span className="flex items-center gap-1.5 text-sm" style={{ color: "var(--green)" }}>
@@ -265,6 +321,11 @@ export default function OrcamentoPage() {
             </span>
           )}
         </div>
+        {fonteSharepoint && (
+          <p className="text-xs mt-2" style={{ color: "var(--stone)" }}>
+            DRE puxada do SharePoint: {fonteSharepoint.nome} ({fmtDataBR(fonteSharepoint.data)})
+          </p>
+        )}
       </div>
 
       {/* Loja em atenção */}

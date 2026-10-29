@@ -57,9 +57,23 @@ export function parseNumeroBR(v: unknown): number {
   return isNaN(n) ? 0 : n;
 }
 
+/**
+ * Converte um JS Date (epoch 1899-12-30, mesma base do Excel) de volta para o
+ * serial numérico de data do Excel. Necessário porque `raw:true` + workbook
+ * lido com `cellDates:true` devolve `Date` para células de data (`t:"d"` ou
+ * `t:"n"` formatada como data) em vez do serial numérico — e o detector de
+ * cabeçalho de mês (`isMesHeaderCell`/`parseMesLabel`, Task S6) só reconhece
+ * number/string, não `Date`. Sem isto, `rawNumbers:true` quebraria a detecção
+ * de mês em arquivos reais (ex. Bella Gula) cujo cabeçalho é data do Excel.
+ */
+function excelSerialFromDate(d: Date): number {
+  return Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000);
+}
+
 /** Normaliza número pt-BR: "1.234,56" → 1234.56 */
 function normalizePtBR(v: unknown): string | number | null {
   if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return excelSerialFromDate(v);
   if (typeof v === "number") return v;
   if (typeof v === "boolean") return v ? 1 : 0;
   const s = String(v).trim();
@@ -76,11 +90,20 @@ function normalizePtBR(v: unknown): string | number | null {
  * @param source base64 string ou Buffer do arquivo
  * @param fileName nome original do arquivo (para detectar extensão)
  * @param selectedSheets abas a incluir (undefined = todas, se ≤ 5)
+ * @param opts.rawNumbers quando `true`, lê células numéricas (`t=n`) com
+ *   `raw:true` — devolve `cell.v` (o número cru) em vez de `cell.w` (texto
+ *   formatado para exibição). Corrige o bug de escala em DREs cujas células
+ *   são formatadas em padrão US (`.w=" 599,814.61 "`): com `raw:false`,
+ *   `normalizePtBR` assumia pt-BR e removia o ponto decimal, gerando valores
+ *   ~1000x menores (Task S7). Default `false` — preserva o comportamento
+ *   atual (texto formatado pt-BR) para produtos/checklist, que dependem de
+ *   `normalizePtBR` interpretar strings como "1.234,56".
  */
 export function parseSpreadsheetToGrid(
   source: string | Buffer,
   fileName: string,
-  selectedSheets?: string[]
+  selectedSheets?: string[],
+  opts?: { rawNumbers?: boolean }
 ): SpreadsheetParseResult {
   let workbook: XLSX.WorkBook;
 
@@ -132,7 +155,11 @@ export function parseSpreadsheetToGrid(
     const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
       defval: null,
-      raw: false, // retorna strings formatadas para preservar pt-BR
+      // raw:false (default) retorna strings formatadas (.w) para preservar
+      // pt-BR em produtos/checklist. raw:true (opts.rawNumbers) retorna o
+      // valor cru (.v) das células numéricas — necessário para DREs com
+      // formatação de exibição em padrão US (Task S7).
+      raw: opts?.rawNumbers === true,
     });
 
     const totalRows = rawRows.length;
@@ -499,7 +526,35 @@ export interface DreExtractResult {
   sheetNames: string[];
 }
 
-const MESES_REGEX = /\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[\w\/\-]*/i;
+// Inclui abreviações pt-BR E inglês ("Jan-26", "Feb-26"...) — ver nota em
+// parseMesLabel sobre células de DATA do Excel formatadas em inglês (Task S6).
+const MESES_REGEX = /\b(jan|fev|feb|mar|abr|apr|mai|may|jun|jul|ago|aug|set|sep|out|oct|nov|dez|dec)[\w\/\-]*/i;
+
+// ── Serial de data do Excel como cabeçalho de mês (Task S6) ──────────────────
+// Alguns arquivos reais (ex.: DRE Ano26 BGP (AZM).xlsb da Bella Gula) trazem o
+// cabeçalho de mês como SERIAL de data do Excel (número puro: 46023=2026-01,
+// 46054=2026-02...) em vez de texto ("jan/26"). Faixa plausível ~40000–60000
+// cobre datas de ~2009 a ~2064 — suficiente pra não colidir com valores de
+// DRE (que aparecem nas linhas de dado, nunca no cabeçalho de mês).
+const SERIAL_DATA_MIN = 40000;
+const SERIAL_DATA_MAX = 60000;
+
+function isSerialDataExcel(cell: string): boolean {
+  if (!/^\d{5,6}$/.test(cell)) return false;
+  const n = Number(cell);
+  return n >= SERIAL_DATA_MIN && n <= SERIAL_DATA_MAX;
+}
+
+/** Converte serial de data do Excel (epoch 1899-12-30) para "YYYY-MM". */
+function serialDataExcelParaAnoMes(serial: number): string {
+  const d = new Date(Date.UTC(1899, 11, 30) + Math.round(serial) * 86400000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** true quando a célula (já convertida pra string) parece cabeçalho de mês — texto OU serial de data. */
+function isMesHeaderCell(cell: string): boolean {
+  return MESES_REGEX.test(cell) || /^\d{1,2}\/\d{2,4}$/.test(cell) || isSerialDataExcel(cell);
+}
 
 export function cellToNumberDre(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
@@ -551,10 +606,7 @@ function detectDreSheetName(workbook: XLSX.WorkBook): string {
     let mesColCount = 0;
     for (let i = 0; i < Math.min(15, rows.length); i++) {
       const row = rows[i] as unknown[];
-      const meses = row.filter(c =>
-        MESES_REGEX.test(String(c ?? "")) ||
-        /^\d{1,2}\/\d{2,4}$/.test(String(c ?? "").trim())
-      );
+      const meses = row.filter(c => isMesHeaderCell(String(c ?? "").trim()));
       if (meses.length >= 3) { mesColCount = meses.length; break; }
     }
     // Aba sem colunas de mês NÃO é candidata (evita aba de mapeamento DE-PARA)
@@ -654,7 +706,7 @@ export function extractDreContext(
     const mesesFound: { colIdx: number; label: string }[] = [];
     for (let j = 0; j < row.length; j++) {
       const cell = String(row[j] ?? "").trim();
-      if (MESES_REGEX.test(cell) || /^\d{1,2}\/\d{2,4}$/.test(cell)) {
+      if (isMesHeaderCell(cell)) {
         mesesFound.push({ colIdx: j, label: cell });
       }
     }
@@ -817,7 +869,7 @@ export function extractDreHistorico(
     const found: { colIdx: number; label: string; anoMes: string }[] = [];
     for (let j = 0; j < row.length; j++) {
       const cell = String(row[j] ?? "").trim();
-      if (!MESES_REGEX.test(cell) && !/^\d{1,2}\/\d{2,4}$/.test(cell)) continue;
+      if (!isMesHeaderCell(cell)) continue;
       // Ignorar colunas de totais/médias
       const upper = cell.toUpperCase();
       if (upper.includes("ANO") || upper.includes("MED") || upper.includes("TOT") || upper.includes("ACUM")) continue;
@@ -883,17 +935,46 @@ export function extractDreHistorico(
 }
 
 /**
- * Converte label de mês ("jan/26", "jan-26", "jan 26", "01/26") para "YYYY-MM".
- * Retorna null se não conseguir parsear.
+ * Converte label de mês para "YYYY-MM". Retorna null se não conseguir parsear.
+ * Aceita:
+ *  - Texto pt-BR: "jan/26", "jan-26", "jan 26"
+ *  - Texto inglês: "Jan-26", "Feb-26"... (célula de DATA do Excel formatada
+ *    em inglês — `.w` devolvido por `raw:false`; só jan/mar/jun/jul/nov
+ *    coincidem com pt-BR, os outros 7 precisam do mapa em inglês — Task S6)
+ *  - "01/26", "1/26" (mês numérico)
+ *  - Serial de data do Excel, número ou string numérica ("46023" → "2026-01",
+ *    faixa plausível ~40000-60000 — Task S6)
  */
-export function parseMesLabel(label: string): string | null {
+export function parseMesLabel(label: string | number): string | null {
+  // Serial de data do Excel (número puro ou numérico vindo como number):
+  // 46023 → "2026-01". Ver isSerialDataExcel/serialDataExcelParaAnoMes (Task S6).
+  if (typeof label === "number") {
+    if (label >= SERIAL_DATA_MIN && label <= SERIAL_DATA_MAX) {
+      return serialDataExcelParaAnoMes(label);
+    }
+    return null;
+  }
+  if (isSerialDataExcel(label.trim())) {
+    return serialDataExcelParaAnoMes(Number(label.trim()));
+  }
+
   const MESES_MAP: Record<string, string> = {
-    jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06",
-    jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12",
+    jan: "01",
+    fev: "02", feb: "02",
+    mar: "03",
+    abr: "04", apr: "04",
+    mai: "05", may: "05",
+    jun: "06",
+    jul: "07",
+    ago: "08", aug: "08",
+    set: "09", sep: "09",
+    out: "10", oct: "10",
+    nov: "11",
+    dez: "12", dec: "12",
   };
   const s = label.trim().toLowerCase();
-  // "jan/26", "jan-26", "jan 26"
-  const m1 = s.match(/^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[\s\/\-](\d{2,4})$/i);
+  // "jan/26", "jan-26", "jan 26", "Feb-26"...
+  const m1 = s.match(/^(jan|fev|feb|mar|abr|apr|mai|may|jun|jul|ago|aug|set|sep|out|oct|nov|dez|dec)[\s\/\-](\d{2,4})$/i);
   if (m1) {
     const mes = MESES_MAP[m1[1].toLowerCase()];
     const anoRaw = m1[2];

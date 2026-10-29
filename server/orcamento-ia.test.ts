@@ -33,8 +33,8 @@ import { gerarSugestaoIA } from "./orcamento-ia";
 import type { GrupoDreMes, RascunhoOrcamento } from "./orcamento-proposta";
 
 const historicoFixture: GrupoDreMes[] = [
-  { anoMes: "2026-07", grupos: { "1": 700000, "4": -200000, "7": -180000 } },
-  { anoMes: "2026-08", grupos: { "1": 720000, "4": -205000, "7": -185000 } },
+  { anoMes: "2026-07", cats: { receitaBruta: 700000, cmv: -200000, folha: -180000 } },
+  { anoMes: "2026-08", cats: { receitaBruta: 720000, cmv: -205000, folha: -185000 } },
 ];
 
 const rascunhoFixture: RascunhoOrcamento = {

@@ -58,8 +58,262 @@ function gerarFixtureDre(): Buffer {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+/**
+ * Simula o arquivo real da Bella Gula (`DRE Ano26 BGP (AZM).xlsb`): o
+ * cabeçalho de mês vem como SERIAL de data do Excel (número puro — 46023,
+ * 46054, 46082 — em vez de texto "jan/26"). Mesmo layout F360 (valor | % |
+ * vazio por mês), só muda o tipo da célula de cabeçalho (number, não string).
+ * Task S6: antes do fix, extrairGruposPorMes voltava [] (0 meses lidos).
+ */
+function gerarFixtureDreSerial(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Bella Gula", 46023, "%", "", 46054, "%", "", 46082, "%", ""],
+    ["1 - Receita Bruta", "R$ 500.000,00", "100,0%", "", "R$ 520.000,00", "100,0%", "", "R$ 540.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 150.000,00", "30,0%", "", "-R$ 156.000,00", "30,0%", "", "-R$ 160.000,00", "29,6%", ""],
+    ["7 - Colaboradores", "-R$ 120.000,00", "24,0%", "", "-R$ 125.000,00", "24,0%", "", "-R$ 130.000,00", "24,1%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+/**
+ * Simula o arquivo real da Bella Gula no que importa pra esta função: 15 abas
+ * (1 aba "DRE" + 14 abas auxiliares, uma por mês — DE-PARA, JAN26, FEV26...).
+ * `parseSpreadsheetToGrid` teria `needsSheetSelection=true` por ter >5 abas
+ * — `extrairGruposPorMes` precisa resolver a aba "DRE" por nome mesmo assim
+ * (sem exigir `selectedSheet` explícito, igual ao caller real em
+ * server/routers/orcamento.ts, que nunca passa `selectedSheet`).
+ */
+function gerarFixtureDreMuitasAbas(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Bella Gula", "Jan-26", "%", "", "Feb-26", "%", "", "Mar-26", "%", ""],
+    ["1 - Receita Bruta", "R$ 500.000,00", "100,0%", "", "R$ 520.000,00", "100,0%", "", "R$ 540.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 150.000,00", "30,0%", "", "-R$ 156.000,00", "30,0%", "", "-R$ 160.000,00", "29,6%", ""],
+    ["7 - Colaboradores", "-R$ 120.000,00", "24,0%", "", "-R$ 125.000,00", "24,0%", "", "-R$ 130.000,00", "24,1%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  // Aba "DE-PARA" (mapeamento, sem colunas de mês) — como no arquivo real.
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Código", "Descrição"], ["1", "RECEITA"]]), "DE-PARA");
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  for (const mes of ["JAN26", "FEV26", "MAR26", "ABR26", "MAI26", "JUN26", "JUL26", "AGO26", "SET26", "OUT26", "NOV26", "DEZ26", "JUN.25"]) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Mês", mes], ["Receita", "100000"]]), mes);
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+/**
+ * Simula o bug real cravado ao vivo na Bella Gula (Task S7): as células de
+ * VALOR na aba "DRE" não são texto pt-BR — são células numéricas (t:"n")
+ * cujo valor cru (.v) é o número certo, mas a FORMATAÇÃO DE EXIBIÇÃO (.z) é
+ * padrão US (vírgula=milhar, ponto=decimal), produzindo .w=" 599,814.61 ".
+ * `aoa_to_sheet` com string literal ("R$ 500.000,00") NÃO reproduz isto —
+ * precisa de célula numérica real com `z` definido, por isso a construção
+ * manual de células abaixo (igual ao fixture de sheet-parser.test.ts).
+ */
+function gerarFixtureDreFormatoUS(): Buffer {
+  const ws: XLSX.WorkSheet = {};
+  const linhas: { desc: string; valores: number[] }[] = [
+    { desc: "1 - Receita Bruta", valores: [550000.1, 560000.2, 574285.61] },
+    { desc: "4 - Custo de Mercadoria", valores: [-170000.3, -175000.4, -180000.5] },
+    { desc: "7 - Colaboradores", valores: [-120000, -125000, -130000] },
+  ];
+  // Linha 1: cabeçalho — "Bella Gula" + 3 blocos (mês | % | vazio), mês como texto pt-BR.
+  ws["A1"] = { t: "s", v: "Bella Gula" };
+  const meses = ["jan/26", "fev/26", "mar/26"];
+  meses.forEach((m, i) => {
+    const col = 1 + i * 3; // B, E, H...
+    ws[XLSX.utils.encode_cell({ r: 0, c: col })] = { t: "s", v: m };
+    ws[XLSX.utils.encode_cell({ r: 0, c: col + 1 })] = { t: "s", v: "%" };
+  });
+  // Linhas de dado: célula de valor numérica formatada em padrão US.
+  linhas.forEach((linha, rIdx) => {
+    const row = rIdx + 1;
+    ws[XLSX.utils.encode_cell({ r: row, c: 0 })] = { t: "s", v: linha.desc };
+    linha.valores.forEach((v, i) => {
+      const col = 1 + i * 3;
+      ws[XLSX.utils.encode_cell({ r: row, c: col })] = { t: "n", v, z: "#,##0.00" };
+    });
+  });
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: linhas.length, c: 9 } });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — células de valor formatadas em padrão US (Task S7)", () => {
+  it("lê o valor CRU (574285.61), não o ~1000x menor produzido por normalizePtBR em texto US", () => {
+    const buf = gerarFixtureDreFormatoUS();
+    const gruposPorMes = extrairGruposPorMes(buf, "dre_bgp.xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    const [jan, fev, mar] = gruposPorMes;
+    expect(jan.cats.receitaBruta).toBeCloseTo(550000.1, 2);
+    expect(fev.cats.receitaBruta).toBeCloseTo(560000.2, 2);
+    expect(mar.cats.receitaBruta).toBeCloseTo(574285.61, 2);
+    expect(mar.cats.cmv).toBeCloseTo(-180000.5, 2);
+    expect(mar.cats.folha).toBeCloseTo(-130000, 2);
+  });
+});
+
+describe("extrairGruposPorMes — arquivo com muitas abas (>5), aba 'DRE' resolvida por nome (Task S6)", () => {
+  it("lê os meses da aba 'DRE' mesmo sem selectedSheet, num arquivo com 15 abas — simula Bella Gula", () => {
+    const buf = gerarFixtureDreMuitasAbas();
+    // Igual ao caller real (server/routers/orcamento.ts): NUNCA passa selectedSheet.
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26 BGP (AZM).xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-01", "2026-02", "2026-03"]);
+    expect(gruposPorMes[0].cats.receitaBruta).toBe(500000);
+  });
+});
+
+/**
+ * Task S8 — o achado-chave: a NUMERAÇÃO dos grupos nível-1 difere por
+ * template de DRE. Mesma loja/dado, duas numerações diferentes:
+ *   - "Agrobar": folha = grupo 7.
+ *   - "Bella Gula": grupo 7 é "MARGEM BRUTA" (SUBTOTAL, derivado) e folha é
+ *     o grupo 8. Mapear por NÚMERO pegaria a Margem Bruta (positiva) como
+ *     se fosse folha — o bug que esta task corrige.
+ */
+// `detectarColunasDeMes` só reconhece um cabeçalho de mês com >=3 colunas de
+// mês real — por isso as fixtures abaixo têm 3 meses (jan/fev/mar), mesmo
+// quando o teste só precisa do último.
+function gerarFixtureNumeracaoAgrobar(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Loja Agrobar", "jan/26", "%", "", "fev/26", "%", "", "mar/26", "%", ""],
+    ["1 - Receita Bruta", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 180.000,00", "30,0%", "", "-R$ 180.000,00", "30,0%", "", "-R$ 180.000,00", "30,0%", ""],
+    ["7 - Colaboradores", "-R$ 150.000,00", "25,0%", "", "-R$ 150.000,00", "25,0%", "", "-R$ 150.000,00", "25,0%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+function gerarFixtureNumeracaoBellaGula(): Buffer {
+  const aoa: (string | number)[][] = [
+    ["Loja Bella Gula", "jan/26", "%", "", "fev/26", "%", "", "mar/26", "%", ""],
+    ["1 - Receita Bruta", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", ""],
+    ["4 - Custo de Mercadoria", "-R$ 180.000,00", "30,0%", "", "-R$ 180.000,00", "30,0%", "", "-R$ 180.000,00", "30,0%", ""],
+    // SUBTOTAL (derivado) — mesmo número que a folha do Agrobar
+    ["7 - MARGEM BRUTA", "R$ 420.000,00", "70,0%", "", "R$ 420.000,00", "70,0%", "", "R$ 420.000,00", "70,0%", ""],
+    // folha é o grupo 8 aqui, não o 7
+    ["8 - Colaboradores", "-R$ 150.000,00", "25,0%", "", "-R$ 150.000,00", "25,0%", "", "-R$ 150.000,00", "25,0%", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — Task S8: classifica pelo NOME, não pelo número (numeração difere por template)", () => {
+  it("numeração Agrobar (folha=grupo 7): classifica receita/cmv/folha corretamente pela categoria", () => {
+    const buf = gerarFixtureNumeracaoAgrobar();
+    const [mes] = extrairGruposPorMes(buf, "agrobar.xlsx", undefined, 1);
+
+    expect(mes.cats.receitaBruta).toBe(600000);
+    expect(mes.cats.cmv).toBe(-180000);
+    expect(mes.cats.folha).toBe(-150000);
+  });
+
+  it("numeração Bella Gula (folha=grupo 8; grupo 7='MARGEM BRUTA' é SUBTOTAL): classifica folha corretamente e IGNORA a Margem Bruta — nunca pelo número", () => {
+    const buf = gerarFixtureNumeracaoBellaGula();
+    const [mes] = extrairGruposPorMes(buf, "bella-gula.xlsx", undefined, 1);
+
+    expect(mes.cats.receitaBruta).toBe(600000);
+    expect(mes.cats.cmv).toBe(-180000);
+    // folha é o grupo 8 (Colaboradores, negativo) — NUNCA o grupo 7 (Margem Bruta, positiva).
+    expect(mes.cats.folha).toBe(-150000);
+    // "MARGEM BRUTA" é derivada (subtotal) — NÃO entra em nenhuma categoria.
+    expect(Object.values(mes.cats)).not.toContain(420000);
+  });
+
+  it("prova a regressão do bug original: se fosse lido por NÚMERO, 'folha' pegaria a Margem Bruta (420000, positiva) em vez de Colaboradores (-150000, negativa)", () => {
+    const buf = gerarFixtureNumeracaoBellaGula();
+    const [mes] = extrairGruposPorMes(buf, "bella-gula.xlsx", undefined, 1);
+
+    expect(mes.cats.folha).not.toBe(420000);
+    expect(mes.cats.folha).toBeLessThan(0);
+  });
+});
+
+describe("extrairGruposPorMes — categoria repetida na mesma aba é SOMADA (Task S8)", () => {
+  it("'Serviços de Terceiros' (grupo 8) + 'Terceiros Eventuais' (grupo 9) — ambos categoria 'terceiros' — são somados no mesmo mês", () => {
+    const aoa: (string | number)[][] = [
+      ["Loja Z", "jan/26", "%", "", "fev/26", "%", "", "mar/26", "%", ""],
+      ["1 - Receita Bruta", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", "", "R$ 600.000,00", "100,0%", ""],
+      ["8 - Serviços de Terceiros", "-R$ 10.000,00", "1,7%", "", "-R$ 10.000,00", "1,7%", "", "-R$ 10.000,00", "1,7%", ""],
+      ["9 - Terceiros Eventuais", "-R$ 40.000,00", "6,7%", "", "-R$ 40.000,00", "6,7%", "", "-R$ 40.000,00", "6,7%", ""],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "DRE");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+    const [mes] = extrairGruposPorMes(buf, "loja-z.xlsx", undefined, 1);
+    expect(mes.cats.terceiros).toBe(-50000);
+  });
+});
+
+/**
+ * Simula um DRE ORÇAMENTÁRIO anual (ex.: "DRE Ano26"): tem coluna pra TODOS
+ * os 12 meses do ano, mas jul/ago/set (últimos com execução real) vêm
+ * preenchidos e out/nov/dez (futuro, ainda sem execução) vêm com todos os
+ * grupos ZERADOS — não ausentes, zerados mesmo (como no arquivo real da
+ * Bella Gula). "Últimos 3 meses" tem que pular essa cauda zerada.
+ */
+function gerarFixtureDreComCaudaZerada(): Buffer {
+  const header: (string | number)[] = ["Bella Gula"];
+  const linhaReceita: (string | number)[] = ["1 - Receita Bruta"];
+  const linhaCmv: (string | number)[] = ["4 - Custo de Mercadoria"];
+  const meses = ["Jul-26", "Aug-26", "Sep-26", "Oct-26", "Nov-26", "Dec-26"];
+  for (let i = 0; i < meses.length; i++) {
+    header.push(meses[i], "%", "");
+    const temDado = i < 3; // jul/ago/set com dado; out/nov/dez zerados (futuro)
+    linhaReceita.push(temDado ? `R$ ${500000 + i * 10000},00`.replace(",00", ",00") : "R$ -", "100,0%", "");
+    linhaCmv.push(temDado ? "-R$ 150.000,00" : "R$ -", "30,0%", "");
+  }
+  const aoa: (string | number)[][] = [header, linhaReceita, linhaCmv];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "DRE");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("extrairGruposPorMes — cauda de meses futuros zerados (orçamento anual) é ignorada (Task S6)", () => {
+  it("'últimos 3 meses' pula out/nov/dez zerados e devolve jul/ago/set (último histórico real)", () => {
+    const buf = gerarFixtureDreComCaudaZerada();
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26.xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-07", "2026-08", "2026-09"]);
+    expect(gruposPorMes.every(m => (m.cats.receitaBruta ?? 0) > 0)).toBe(true);
+  });
+});
+
+describe("extrairGruposPorMes — cabeçalho de mês em serial de data do Excel (Task S6)", () => {
+  it("lê os 3 meses quando o cabeçalho vem como serial (46023/46054/46082) em vez de texto — simula Bella Gula", () => {
+    const buf = gerarFixtureDreSerial();
+    const gruposPorMes = extrairGruposPorMes(buf, "DRE Ano26 BGP (AZM).xlsx", undefined, 3);
+
+    expect(gruposPorMes).toHaveLength(3);
+    expect(gruposPorMes.map(m => m.anoMes)).toEqual(["2026-01", "2026-02", "2026-03"]);
+
+    const [jan, fev, mar] = gruposPorMes;
+    expect(jan.cats.receitaBruta).toBe(500000);
+    expect(jan.cats.cmv).toBe(-150000);
+    expect(jan.cats.folha).toBe(-120000);
+    expect(fev.cats.receitaBruta).toBe(520000);
+    expect(mar.cats.receitaBruta).toBe(540000);
+  });
+});
+
 describe("extrairGruposPorMes", () => {
-  it("lê os grupos nível-1 dos últimos 3 meses (default) da fixture F360", () => {
+  it("classifica os grupos nível-1 dos últimos 3 meses (default) pela CATEGORIA do nome — fixture F360 (numeração Agrobar)", () => {
     const buf = gerarFixtureDre();
     const gruposPorMes = extrairGruposPorMes(buf, "DRE Agrobar Porto Alegre_Novo.xlsx");
 
@@ -68,28 +322,30 @@ describe("extrairGruposPorMes", () => {
 
     const [dez, jan, fev] = gruposPorMes;
 
-    expect(dez.grupos["1"]).toBe(700000);
-    expect(dez.grupos["4"]).toBe(-200000); // CMV negativo, igual à fixture
-    expect(dez.grupos["7"]).toBe(-180000);
-    expect(dez.grupos["5"]).toBe(-50000);
-    expect(dez.grupos["6"]).toBe(-15000);
-    expect(dez.grupos["8"]).toBe(-10000);
-    expect(dez.grupos["10"]).toBe(-40000);
-    expect(dez.grupos["11"]).toBe(-12000);
-    expect(dez.grupos["13"]).toBe(-20000);
-    // Sub-linhas (4.1, 1.1) NÃO entram — só nível 1.
-    expect(dez.grupos["4.1"]).toBeUndefined();
-    expect(dez.grupos["1.1"]).toBeUndefined();
-    // Grupo "9 - Terceiros Eventuais" não existe na fixture → ausente no dict.
-    expect(dez.grupos["9"]).toBeUndefined();
+    expect(dez.cats.receitaBruta).toBe(700000);
+    expect(dez.cats.redutores).toBe(-5000);
+    expect(dez.cats.cmv).toBe(-200000); // CMV negativo, igual à fixture
+    expect(dez.cats.folha).toBe(-180000);
+    expect(dez.cats.impostos).toBe(-50000);
+    expect(dez.cats.franquias).toBe(-15000);
+    expect(dez.cats.terceiros).toBe(-10000); // só "Serviços de Terceiros" — "Terceiros Eventuais" não existe nesta fixture
+    expect(dez.cats.ocupacao).toBe(-40000);
+    expect(dez.cats.financeiras).toBe(-12000);
+    expect(dez.cats.proLabore).toBe(-20000);
+    // Categoria sem NENHUMA linha correspondente na fixture → ausente no dict (nunca 0 disfarçado).
+    expect(dez.cats.outras).toBeUndefined();
+    // Linhas DERIVADAS ("Receita Líquida", "Lucro Operacional", "Resultado") NUNCA entram em categoria nenhuma.
+    expect(Object.values(dez.cats)).not.toContain(675200); // Receita Líquida (grupo 3)
+    expect(Object.values(dez.cats)).not.toContain(171100); // Lucro Operacional (grupo 12)
+    expect(Object.values(dez.cats)).not.toContain(151100); // Resultado (grupo 14)
 
-    expect(jan.grupos["1"]).toBe(720000);
-    expect(jan.grupos["4"]).toBe(-205000);
-    expect(jan.grupos["7"]).toBe(-185000);
+    expect(jan.cats.receitaBruta).toBe(720000);
+    expect(jan.cats.cmv).toBe(-205000);
+    expect(jan.cats.folha).toBe(-185000);
 
-    expect(fev.grupos["1"]).toBe(740000);
-    expect(fev.grupos["4"]).toBe(-210000);
-    expect(fev.grupos["7"]).toBe(-190000);
+    expect(fev.cats.receitaBruta).toBe(740000);
+    expect(fev.cats.cmv).toBe(-210000);
+    expect(fev.cats.folha).toBe(-190000);
   });
 
   it("devolve só os últimos N meses quando `meses` é passado explicitamente", () => {
@@ -115,15 +371,15 @@ describe("proporOrcamento", () => {
   const gruposPorMes: GrupoDreMes[] = [
     {
       anoMes: "2025-12",
-      grupos: { "1": 700000, "4": -200000, "5": -50000, "6": -15000, "7": -180000, "8": -10000, "10": -40000, "11": -12000, "13": -20000 },
+      cats: { receitaBruta: 700000, cmv: -200000, impostos: -50000, franquias: -15000, folha: -180000, terceiros: -10000, ocupacao: -40000, financeiras: -12000, proLabore: -20000 },
     },
     {
       anoMes: "2026-01",
-      grupos: { "1": 720000, "4": -205000, "5": -51000, "6": -15500, "7": -185000, "8": -10200, "10": -41000, "11": -12300, "13": -20000 },
+      cats: { receitaBruta: 720000, cmv: -205000, impostos: -51000, franquias: -15500, folha: -185000, terceiros: -10200, ocupacao: -41000, financeiras: -12300, proLabore: -20000 },
     },
     {
       anoMes: "2026-02",
-      grupos: { "1": 740000, "4": -210000, "5": -52000, "6": -16000, "7": -190000, "8": -10400, "10": -42000, "11": -12600, "13": -20000 },
+      cats: { receitaBruta: 740000, cmv: -210000, impostos: -52000, franquias: -16000, folha: -190000, terceiros: -10400, ocupacao: -42000, financeiras: -12600, proLabore: -20000 },
     },
   ];
 
@@ -148,7 +404,7 @@ describe("proporOrcamento", () => {
     expect(rascunho.proLabore).toBe(20000);
   });
 
-  it("NUNCA chuta: grupo 9 (Terceiros Eventuais) ausente em TODOS os meses → outrasDespesas e marketing ficam null (não 0, não benchmark)", () => {
+  it("NUNCA chuta: categorias 'despesasOperacionais'/'outras' ausentes em TODOS os meses → outrasDespesas e marketing ficam null (não 0, não benchmark)", () => {
     const rascunho = proporOrcamento(gruposPorMes);
     expect(rascunho.outrasDespesas).toBeNull();
     expect(rascunho.marketing).toBeNull();
@@ -156,13 +412,13 @@ describe("proporOrcamento", () => {
     expect(rascunho.outrasDespesas).not.toBe(0);
   });
 
-  it("grupo 6 (Taxa Mensal Franquias) não tem sub-linha pra separar royalties de fundo de promoção: o total vai pra royaltiesPct e fundoMarketingPct fica null", () => {
+  it("categoria 'franquias' (royalties + fundo de promoção) não tem sub-linha pra separar os dois: o total vai pra royaltiesPct e fundoMarketingPct fica null", () => {
     const rascunho = proporOrcamento(gruposPorMes);
     expect(rascunho.royaltiesPct).not.toBeNull();
     expect(rascunho.fundoMarketingPct).toBeNull();
   });
 
-  it("grupo 10 (Custo de Ocupação) não tem sub-linha pra separar aluguel/condomínio/energia/gás/água: só aluguel recebe o total, os demais ficam null", () => {
+  it("categoria 'ocupacao' (aluguel+condomínio+energia+gás+água+utilidades) não tem sub-linha pra separar: só aluguel recebe o total, os demais ficam null", () => {
     const rascunho = proporOrcamento(gruposPorMes);
     expect(rascunho.aluguel).not.toBeNull();
     expect(rascunho.condominio).toBeNull();
@@ -181,20 +437,21 @@ describe("proporOrcamento", () => {
   });
 
   // Nota (Task 7, Fase B): `emAtencao` deixou de ser "faltam dados-base" e
-  // passou a ser a regra REAL — resultado operacional médio (soma dos grupos
-  // 1..11, com sinal) negativo. Cobertura completa do novo critério está em
-  // `orcamento-em-atencao.test.ts`; os testes abaixo só confirmam que, com
-  // ESTE histórico (positivo), o critério novo concorda com o antigo.
+  // passou a ser a regra REAL — resultado operacional médio (receita líquida
+  // + categorias de custo, com sinal) negativo. Cobertura completa do novo
+  // critério está em `orcamento-em-atencao.test.ts`; os testes abaixo só
+  // confirmam que, com ESTE histórico (positivo), o critério novo concorda
+  // com o antigo.
   it("emAtencao = false quando o resultado operacional médio do histórico é positivo", () => {
     const rascunho = proporOrcamento(gruposPorMes);
     expect(rascunho.emAtencao).toBe(false);
     expect(rascunho.rampaMeses).toBeNull();
   });
 
-  it("grupo de CMV ausente em todos os meses não derruba o resultado operacional pra negativo (removendo uma despesa o resultado só aumenta) → emAtencao continua false", () => {
+  it("categoria 'cmv' ausente em todos os meses não derruba o resultado operacional pra negativo (removendo uma despesa o resultado só aumenta) → emAtencao continua false", () => {
     const semCmv: GrupoDreMes[] = gruposPorMes.map(m => {
-      const { "4": _omit, ...resto } = m.grupos;
-      return { anoMes: m.anoMes, grupos: resto };
+      const { cmv: _omit, ...resto } = m.cats;
+      return { anoMes: m.anoMes, cats: resto };
     });
     const rascunho = proporOrcamento(semCmv);
     expect(rascunho.cmvPct).toBeNull();

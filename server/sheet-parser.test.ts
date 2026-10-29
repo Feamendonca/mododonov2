@@ -19,6 +19,7 @@ import {
   parseChecklistSheet,
   parseSpreadsheetToGrid,
   extractDreContext,
+  parseMesLabel,
 } from "./sheet-parser";
 
 // ─── Helpers para gerar planilhas em memória ──────────────────────────────────
@@ -259,6 +260,79 @@ describe("parseSpreadsheetToGrid", () => {
     const buf = makeXlsxBuffer(rows);
     const result = parseSpreadsheetToGrid(buf, "meu-arquivo.xlsx");
     expect(result.fileName).toBe("meu-arquivo.xlsx");
+  });
+});
+
+// ─── 3b. parseSpreadsheetToGrid — rawNumbers (correção escala US vs pt-BR, Task S7) ──
+// Repro ao vivo confirmada: na aba "DRE" real (Bella Gula), as células de
+// valor são t=n (número) com v=599814.61 (cru, correto) e w=" 599,814.61 "
+// (texto formatado em padrão US — vírgula=milhar, ponto=decimal). Com
+// raw:false (default), o leitor pega o .w e normalizePtBR ASSUME pt-BR
+// (remove o ponto) → ~1000x menor. rawNumbers:true usa o .v cru.
+
+/** Constrói um .xlsx com uma célula numérica cujo .w fica formatado em padrão US. */
+function makeUsFormattedXlsx(value: number, label = "Receita Bruta"): Buffer {
+  const wb = XLSX.utils.book_new();
+  const ws: XLSX.WorkSheet = {};
+  ws["A1"] = { t: "s", v: label };
+  ws["B1"] = { t: "n", v: value, z: "#,##0.00" };
+  ws["!ref"] = "A1:B1";
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+describe("parseSpreadsheetToGrid — rawNumbers (Task S7)", () => {
+  it("com rawNumbers:true, devolve o valor numérico CRU (599814.61), não o texto formatado US mal-interpretado", () => {
+    const buf = makeUsFormattedXlsx(599814.61);
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    expect(result.sheets[0].rows[0].cells[1]).toBe(599814.61);
+  });
+
+  it("documenta o bug: sem rawNumbers (default), o mesmo arquivo formatado US sai ~1000x menor", () => {
+    const buf = makeUsFormattedXlsx(599814.61);
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx");
+    // .w=" 599,814.61 " é lido como texto; normalizePtBR assume pt-BR
+    // (remove o ponto de "milhar") → 599.81461, não 599814.61.
+    expect(result.sheets[0].rows[0].cells[1]).not.toBe(599814.61);
+    expect(result.sheets[0].rows[0].cells[1]).toBeCloseTo(599.81461, 3);
+  });
+
+  it("rawNumbers:true não quebra célula de DATA do Excel usada como cabeçalho de mês (vira Date sob raw:true+cellDates — precisa reconverter para serial)", () => {
+    const wb = XLSX.utils.book_new();
+    const ws: XLSX.WorkSheet = {};
+    // Cabeçalho "jan/26" como serial de data do Excel (46023), formatado "mmm-yy"
+    ws["A1"] = { t: "n", v: 46023, z: "mmm-yy" };
+    ws["B1"] = { t: "n", v: 599814.61, z: "#,##0.00" };
+    ws["!ref"] = "A1:B1";
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    const headerCell = result.sheets[0].rows[0].cells[0];
+    expect(parseMesLabel(headerCell as string | number)).toBe("2026-01");
+    // E o valor ao lado continua correto
+    expect(result.sheets[0].rows[0].cells[1]).toBe(599814.61);
+  });
+
+  it("rawNumbers:true não quebra célula t='d' (Date real do Excel) usada como cabeçalho de mês", () => {
+    const wb = XLSX.utils.book_new();
+    const ws: XLSX.WorkSheet = {};
+    ws["A1"] = { t: "d", v: new Date(Date.UTC(2026, 0, 1)), z: "mmm-yy" };
+    ws["!ref"] = "A1:A1";
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const result = parseSpreadsheetToGrid(buf, "dre.xlsx", undefined, { rawNumbers: true });
+    const headerCell = result.sheets[0].rows[0].cells[0];
+    expect(parseMesLabel(headerCell as string | number)).toBe("2026-01");
+  });
+
+  it("default (sem opts) continua lendo normalmente — não quebra chamadas existentes", () => {
+    const rows = [
+      ["Produto", "Custo"],
+      ["Filé Mignon", "1.234,56"],
+    ];
+    const buf = makeXlsxBuffer(rows);
+    const result = parseSpreadsheetToGrid(buf, "teste.xlsx");
+    expect(result.sheets[0].rows[1].cells[1]).toBe(1234.56);
   });
 });
 
@@ -563,5 +637,64 @@ describe("extractDreContext — formato US vs BR e seleção de aba por score", 
     // Forçar seleção da aba de mapeamento (sem meses nem valores reais de DRE)
     const result = extractDreContext(buf, "mapeamento.xlsx", ["Mapeamento"]);
     expect(result.needsSheetSelection).toBe(true);
+  });
+});
+
+// ─── Testes de parseMesLabel — serial de data do Excel (Task S6) ─────────────
+// Repro ao vivo: aba "DRE" da Bella Gula (DRE Ano26 BGP (AZM).xlsb) tem o
+// cabeçalho de mês como SERIAL de data do Excel (46023=2026-01, 46054=2026-02,
+// 46082=2026-03, 46113=2026-04...) em vez de texto ("jan/26"). O leitor
+// detectava 0 meses porque só reconhecia texto.
+describe("parseMesLabel — serial de data do Excel", () => {
+  it("converte serial numérico (number) para YYYY-MM", () => {
+    expect(parseMesLabel(46023)).toBe("2026-01");
+    expect(parseMesLabel(46054)).toBe("2026-02");
+    expect(parseMesLabel(46082)).toBe("2026-03");
+    expect(parseMesLabel(46113)).toBe("2026-04");
+  });
+
+  it("converte serial numérico como STRING (como vem da grade lida) para YYYY-MM", () => {
+    // parseSpreadsheetToGrid/sheet_to_json normalizam a célula numérica, mas o
+    // código de detecção sempre faz String(cell) antes de chamar parseMesLabel.
+    expect(parseMesLabel("46023")).toBe("2026-01");
+    expect(parseMesLabel("46054")).toBe("2026-02");
+  });
+
+  it("NÃO quebra a detecção de texto existente (jan/26, 01/2026, MM/AAAA)", () => {
+    expect(parseMesLabel("jan/26")).toBe("2026-01");
+    expect(parseMesLabel("jan-26")).toBe("2026-01");
+    expect(parseMesLabel("01/2026")).toBe("2026-01");
+    expect(parseMesLabel("1/26")).toBe("2026-01");
+  });
+
+  it("não confunde número pequeno (fora da faixa de serial de data) com mês", () => {
+    // "2026" sozinho (ano, sem separador) não é um serial de data plausível
+    // (fora da faixa ~40000-60000) nem bate o formato de texto — deve ser null.
+    expect(parseMesLabel("2026")).toBeNull();
+    expect(parseMesLabel(2026)).toBeNull();
+  });
+});
+
+// ─── Testes de parseMesLabel — abreviação de mês em INGLÊS (Task S6) ────────
+// Repro ao vivo real: a aba "DRE" da Bella Gula tem célula de DATA do Excel
+// (t:"d") cujo texto formatado (`.w`, o que `raw:false` devolve) é "Jan-26",
+// "Feb-26", "Mar-26"... (abreviação em INGLÊS, não "jan/26" pt-BR). Só
+// jan/mar/jun/jul/nov coincidem com o prefixo pt-BR — fev/abr/mai/ago/set/
+// out/dez (fev→feb, abr→apr, mai→may, ago→aug, set→sep, out→oct, dez→dec)
+// não batiam e o mês era perdido/mal-detectado.
+describe("parseMesLabel — abreviação de mês em inglês (cabeçalho de data formatada)", () => {
+  it("reconhece os 12 meses em abreviação inglesa 'Mon-YY'", () => {
+    expect(parseMesLabel("Jan-26")).toBe("2026-01");
+    expect(parseMesLabel("Feb-26")).toBe("2026-02");
+    expect(parseMesLabel("Mar-26")).toBe("2026-03");
+    expect(parseMesLabel("Apr-26")).toBe("2026-04");
+    expect(parseMesLabel("May-26")).toBe("2026-05");
+    expect(parseMesLabel("Jun-26")).toBe("2026-06");
+    expect(parseMesLabel("Jul-26")).toBe("2026-07");
+    expect(parseMesLabel("Aug-26")).toBe("2026-08");
+    expect(parseMesLabel("Sep-26")).toBe("2026-09");
+    expect(parseMesLabel("Oct-26")).toBe("2026-10");
+    expect(parseMesLabel("Nov-26")).toBe("2026-11");
+    expect(parseMesLabel("Dec-26")).toBe("2026-12");
   });
 });

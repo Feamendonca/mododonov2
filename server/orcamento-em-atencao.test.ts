@@ -28,33 +28,31 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     const gruposPorMes: GrupoDreMes[] = [
       {
         anoMes: "2026-07",
-        grupos: {
-          "1": 500000, // receita bruta
-          "4": -150000, // CMV
-          "5": -35000, // impostos
-          "6": -10000, // royalties/fundo
-          "7": -200000, // folha
-          "8": -5000, // serviços de terceiros
-          "9": -90000, // terceiros eventuais
-          "10": -30000, // ocupação
-          "11": -15000, // financeiras
+        cats: {
+          receitaBruta: 500000,
+          cmv: -150000,
+          impostos: -35000,
+          franquias: -10000, // royalties/fundo
+          folha: -200000,
+          terceiros: -95000, // serviços de terceiros (-5000) + terceiros eventuais (-90000), já somados
+          ocupacao: -30000,
+          financeiras: -15000,
         },
-        // soma 1..11 = 500000-150000-35000-10000-200000-5000-90000-30000-15000 = -35000
+        // receitaLiq(500000+0) + custos = 500000-150000-35000-10000-200000-95000-30000-15000 = -35000
       },
       {
         anoMes: "2026-08",
-        grupos: {
-          "1": 510000,
-          "4": -150000,
-          "5": -35000,
-          "6": -10000,
-          "7": -200000,
-          "8": -5000,
-          "9": -90000,
-          "10": -30000,
-          "11": -15000,
+        cats: {
+          receitaBruta: 510000,
+          cmv: -150000,
+          impostos: -35000,
+          franquias: -10000,
+          folha: -200000,
+          terceiros: -95000,
+          ocupacao: -30000,
+          financeiras: -15000,
         },
-        // soma 1..11 = -25000
+        // soma = -25000
       },
     ];
 
@@ -68,29 +66,29 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     const gruposPorMes: GrupoDreMes[] = [
       {
         anoMes: "2026-07",
-        grupos: {
-          "1": 700000,
-          "4": -200000,
-          "5": -50000,
-          "6": -15000,
-          "7": -180000,
-          "8": -10000,
-          "10": -40000,
-          "11": -12000,
+        cats: {
+          receitaBruta: 700000,
+          cmv: -200000,
+          impostos: -50000,
+          franquias: -15000,
+          folha: -180000,
+          terceiros: -10000,
+          ocupacao: -40000,
+          financeiras: -12000,
         },
-        // soma 1..11 = 700000-200000-50000-15000-180000-10000-40000-12000 = 193000
+        // receitaLiq(700000) + custos = 700000-200000-50000-15000-180000-10000-40000-12000 = 193000
       },
       {
         anoMes: "2026-08",
-        grupos: {
-          "1": 720000,
-          "4": -205000,
-          "5": -51000,
-          "6": -15500,
-          "7": -185000,
-          "8": -10200,
-          "10": -41000,
-          "11": -12300,
+        cats: {
+          receitaBruta: 720000,
+          cmv: -205000,
+          impostos: -51000,
+          franquias: -15500,
+          folha: -185000,
+          terceiros: -10200,
+          ocupacao: -41000,
+          financeiras: -12300,
         },
       },
     ];
@@ -101,46 +99,42 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     expect(rascunho.rampaMeses).toBeNull();
   });
 
-  it("DRE F360 REAL (com grupos 2, 3 e 12 presentes): loja no vermelho (receita líquida ~700k, custos 4..11 ~-750k) → emAtencao=true, SEM dupla contagem de receita bruta + receita líquida", () => {
-    // Na DRE F360 real, grupo 3 (Receita Líquida) é DERIVADO (= grupo 1 +
-    // grupo 2 Redutores) e vem preenchido no arquivo. Somar 1..11 cru contaria
-    // Receita Bruta + Redutores + Receita Líquida juntos → infla o resultado.
-    // O resultado operacional correto = Receita Líquida (grupo 3) + custos 4..11.
+  it("DRE F360 REAL (com redutores e linha de resultado presentes): loja no vermelho (receita líquida ~700k, custos ~-750k) → emAtencao=true, SEM dupla contagem de receita bruta + receita líquida", () => {
+    // Na DRE F360 real, a linha "Receita Líquida" é DERIVADA (= Receita
+    // Bruta + Redutores) e vem preenchida no arquivo, mas é IGNORADA na
+    // classificação por categoria (REGEX_DERIVADA) — nunca entra em `cats`.
+    // O resultado operacional correto é reconstruído: receitaBruta +
+    // redutores + custos.
     const gruposPorMes: GrupoDreMes[] = [
       {
         anoMes: "2026-07",
-        grupos: {
-          "1": 720000, // Receita Bruta
-          "2": -20000, // Redutores de Venda
-          "3": 700000, // Receita Líquida (DERIVADA = 1 + 2)
-          "4": -250000, // CMV
-          "5": -55000, // impostos
-          "6": -16000, // royalties/fundo
-          "7": -300000, // folha
-          "8": -12000, // serviços
-          "9": -40000, // terceiros eventuais
-          "10": -62000, // ocupação
-          "11": -15000, // financeiras
-          "12": -50000, // Lucro Operacional (DERIVADO) — deve ser IGNORADO
+        cats: {
+          receitaBruta: 720000,
+          redutores: -20000, // Redutores de Venda
+          // "Receita Líquida" (derivada) NUNCA aparece aqui — classificada como null.
+          cmv: -250000,
+          impostos: -55000,
+          franquias: -16000, // royalties/fundo
+          folha: -300000,
+          terceiros: -52000, // serviços (-12000) + terceiros eventuais (-40000)
+          ocupacao: -62000,
+          financeiras: -15000,
+          // "Lucro Operacional" (derivada) também NUNCA aparece — ignorada.
         },
-        // receita líquida 700000 + custos(4..11 = -750000) = -50000 (vermelho).
-        // Soma CRUA 1..11 (bug) = 720000-20000+700000-750000 = +650000 (falso positivo).
+        // receitaLiq(720000-20000=700000) + custos(-750000) = -50000 (vermelho).
       },
       {
         anoMes: "2026-08",
-        grupos: {
-          "1": 720000,
-          "2": -20000,
-          "3": 700000,
-          "4": -250000,
-          "5": -55000,
-          "6": -16000,
-          "7": -300000,
-          "8": -12000,
-          "9": -40000,
-          "10": -62000,
-          "11": -15000,
-          "12": -50000,
+        cats: {
+          receitaBruta: 720000,
+          redutores: -20000,
+          cmv: -250000,
+          impostos: -55000,
+          franquias: -16000,
+          folha: -300000,
+          terceiros: -52000,
+          ocupacao: -62000,
+          financeiras: -15000,
         },
       },
     ];
@@ -151,22 +145,20 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     expect(rascunho.rampaMeses).toBe(3);
   });
 
-  it("DRE F360 REAL com grupos 2/3/12 presentes mas loja saudável (receita líquida 700k, custos 4..11 ~-600k) → emAtencao=false", () => {
+  it("DRE F360 REAL com redutores presentes mas loja saudável (receita líquida 700k, custos ~-507k) → emAtencao=false", () => {
     const gruposPorMes: GrupoDreMes[] = [
       {
         anoMes: "2026-07",
-        grupos: {
-          "1": 720000,
-          "2": -20000,
-          "3": 700000,
-          "4": -200000,
-          "5": -50000,
-          "6": -15000,
-          "7": -180000,
-          "8": -10000,
-          "10": -40000,
-          "11": -12000,
-          "12": 193000, // derivado — ignorado
+        cats: {
+          receitaBruta: 720000,
+          redutores: -20000,
+          cmv: -200000,
+          impostos: -50000,
+          franquias: -15000,
+          folha: -180000,
+          terceiros: -10000,
+          ocupacao: -40000,
+          financeiras: -12000,
         },
         // 700000 + custos(-507000) = +193000 (saudável).
       },
@@ -178,22 +170,23 @@ describe("proporOrcamento — emAtencao (resultado operacional médio)", () => {
     expect(rascunho.rampaMeses).toBeNull();
   });
 
-  it("NÃO relê o grupo 12/14 (linha de resultado) — soma só os componentes, mesmo que a linha 12 da planilha esteja presente e divirja", () => {
-    // Monta um mês cujo "12" (lido, mas não deveria influenciar) diz uma
-    // coisa e os componentes 1..11 dizem outra. O resultado tem que seguir
-    // SEMPRE os componentes.
+  it("NUNCA relê a linha de resultado derivada — soma só as categorias de custo, mesmo que uma linha de nome inesperado 'pareça' resultado", () => {
+    // Monta um mês cujos componentes somam negativo. Uma linha de nome
+    // "Resultado Parcial" (derivada pelo REGEX_DERIVADA) existiria na
+    // planilha real mas, como `extrairGruposPorMes` já a exclui na origem,
+    // aqui simulamos diretamente o `cats` sem ela — o resultado tem que
+    // seguir SEMPRE os componentes, nunca uma linha de resultado.
     const gruposPorMes: GrupoDreMes[] = [
       {
         anoMes: "2026-07",
-        grupos: {
-          "1": 500000,
-          "4": -150000,
-          "5": -35000,
-          "7": -200000,
-          "9": -150000, // puxa o resultado dos componentes pro vermelho
-          "12": 999999, // linha de resultado da planilha — deve ser IGNORADA
+        cats: {
+          receitaBruta: 500000,
+          cmv: -150000,
+          impostos: -35000,
+          folha: -200000,
+          terceiros: -150000, // puxa o resultado dos componentes pro vermelho
         },
-        // soma 1..11 = 500000-150000-35000-200000-150000 = -35000 (negativo)
+        // receitaLiq(500000) + custos = 500000-150000-35000-200000-150000 = -35000 (negativo)
       },
     ];
 
