@@ -33,9 +33,22 @@ vi.mock("./orcamento-proposta", () => ({
   calcularDre: vi.fn(),
 }));
 
+// Task L3 (orçamento linha a linha): `importarDoSharePoint` também chama
+// extrairArvoreDre/proporLinhas/calcularResumoLinhas — mockados aqui (sem
+// relação com o foco deste arquivo, que é origem SharePoint + "não grava nada").
+vi.mock("./orcamento-arvore", () => ({
+  extrairArvoreDre: vi.fn(),
+  proporLinhas: vi.fn(),
+}));
+vi.mock("./orcamento-resumo", () => ({
+  calcularResumoLinhas: vi.fn(),
+}));
+
 import { getStoreById, getStoresByUserId } from "./db";
 import { resolveDriveItem, listFolderFiles, pickLatestDre, downloadSpFile } from "./sharepoint";
 import { extrairGruposPorMes, proporOrcamento, calcularDre } from "./orcamento-proposta";
+import { extrairArvoreDre, proporLinhas } from "./orcamento-arvore";
+import { calcularResumoLinhas } from "./orcamento-resumo";
 import { orcamentoRouter } from "./routers/orcamento";
 
 // ─── Fixtures de contexto tRPC ──────────────────────────────────────────────
@@ -86,6 +99,8 @@ describe("orcamento.importarDoSharePoint", () => {
     metaDiaria: 23333,
     parcial: false,
   };
+  const linhasFake = [{ codigo: "1", label: "Receita Bruta", nivel: 1 }] as any;
+  const resumoFake = { receitaBruta: 700000, ebitda: 100000, ebitdaPct: 0.14, metaDiaria: 23333, pontoEquilibrio: 500000, parcial: false };
 
   beforeEach(() => {
     (getStoreById as any).mockResolvedValue({
@@ -102,6 +117,9 @@ describe("orcamento.importarDoSharePoint", () => {
     (extrairGruposPorMes as any).mockReturnValue([{ anoMes: "2026-09", grupos: { "1": 700000 } }]);
     (proporOrcamento as any).mockReturnValue(rascunhoFake);
     (calcularDre as any).mockReturnValue(dreFake);
+    (extrairArvoreDre as any).mockReturnValue([{ anoMes: "2026-09", linhas: [] }]);
+    (proporLinhas as any).mockReturnValue(linhasFake);
+    (calcularResumoLinhas as any).mockReturnValue(resumoFake);
   });
 
   it("não-admin sem vínculo com a loja → FORBIDDEN, e NÃO toca SharePoint/propõe nada", async () => {
@@ -149,10 +167,15 @@ describe("orcamento.importarDoSharePoint", () => {
     );
     expect(proporOrcamento).toHaveBeenCalledWith([{ anoMes: "2026-09", grupos: { "1": 700000 } }]);
     expect(calcularDre).toHaveBeenCalledWith(rascunhoFake, 30);
+    expect(extrairArvoreDre).toHaveBeenCalledWith(expect.any(Buffer), spFile.name, undefined, 3);
+    expect(proporLinhas).toHaveBeenCalled();
+    expect(calcularResumoLinhas).toHaveBeenCalled();
 
     expect(result).toEqual({
       rascunho: rascunhoFake,
       dre: dreFake,
+      linhas: linhasFake,
+      resumo: resumoFake,
       fonte: { nome: spFile.name, data: spFile.lastModifiedDateTime },
     });
   });
@@ -212,6 +235,8 @@ describe("orcamento.importarDoSharePoint", () => {
     expect(result).toEqual({
       rascunho: rascunhoFake,
       dre: dreFake,
+      linhas: linhasFake,
+      resumo: resumoFake,
       fonte: { nome: spFileArquivo.name, data: spFileArquivo.lastModifiedDateTime },
     });
   });
@@ -253,6 +278,8 @@ describe("orcamento.importarDoSharePoint", () => {
     expect(result).toEqual({
       rascunho: rascunhoFake,
       dre: dreFake,
+      linhas: linhasFake,
+      resumo: resumoFake,
       fonte: { nome: spFile.name, data: spFile.lastModifiedDateTime },
     });
     expect(getStoresByUserId).not.toHaveBeenCalled();

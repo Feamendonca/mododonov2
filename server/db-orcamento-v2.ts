@@ -255,3 +255,87 @@ export async function getMetasDiarias(storeId: number, anoMes: string): Promise<
     pesoDia: r.peso_dia != null ? Number(r.peso_dia) : null,
   }));
 }
+
+export interface LinhaOrcamentoInput {
+  codigo: string;
+  label: string;
+  nivel: number;
+  valor: number | null;
+  ordem: number;
+  editavel: boolean;
+}
+
+export interface LinhaOrcamentoRow {
+  id: number;
+  orcamentoId: number;
+  codigo: string;
+  label: string | null;
+  nivel: number | null;
+  valor: number | null;
+  ordem: number | null;
+  editavel: boolean | null;
+}
+
+/**
+ * Grava as linhas do orçamento (Task L2, reforma "orçamento linha a linha")
+ * — espelha a DRE (`server/orcamento-arvore.ts`, Task L1), uma linha por
+ * `codigo`. UPSERT via `ON CONFLICT (orcamento_id, codigo) DO UPDATE SET`
+ * (índice único `uq_orc_linha` — drizzle/schema.ts). Lista vazia → não
+ * chama `rawQuery` (nada a gravar).
+ *
+ * Salva só o que veio em `linhas` — não apaga linhas de códigos ausentes
+ * (mesmo princípio de `upsertOrcamentoRascunho`: nunca mexe no que não foi
+ * enviado).
+ */
+export async function salvarLinhas(
+  orcamentoId: number,
+  linhas: LinhaOrcamentoInput[]
+): Promise<void> {
+  if (linhas.length === 0) return;
+
+  const valuesClauses: string[] = [];
+  const params: unknown[] = [];
+  for (const linha of linhas) {
+    valuesClauses.push("(?, ?, ?, ?, ?, ?, ?)");
+    params.push(
+      orcamentoId,
+      linha.codigo,
+      linha.label,
+      linha.nivel,
+      linha.valor,
+      linha.ordem,
+      linha.editavel
+    );
+  }
+
+  const sql =
+    `INSERT INTO orcamento_linhas (orcamento_id, codigo, label, nivel, valor, ordem, editavel) ` +
+    `VALUES ${valuesClauses.join(", ")} ` +
+    `ON CONFLICT (orcamento_id, codigo) DO UPDATE SET ` +
+    `valor = EXCLUDED.valor, label = EXCLUDED.label, nivel = EXCLUDED.nivel, ` +
+    `ordem = EXCLUDED.ordem, editavel = EXCLUDED.editavel`;
+
+  await rawQuery(sql, params);
+}
+
+/**
+ * Lê as linhas de um orçamento (Task L2), ordenadas por `ordem` (a ORDEM da
+ * DRE, preservada desde `proporLinhas` — Task L1). Sem dados → `[]`.
+ */
+export async function getLinhas(orcamentoId: number): Promise<LinhaOrcamentoRow[]> {
+  const rows = await rawQuery(
+    `SELECT id, orcamento_id, codigo, label, nivel, valor, ordem, editavel ` +
+      `FROM orcamento_linhas WHERE orcamento_id = ? ORDER BY ordem`,
+    [orcamentoId]
+  );
+  return rows.map((r) => ({
+    id: r.id as number,
+    orcamentoId: r.orcamento_id as number,
+    codigo: r.codigo as string,
+    label: (r.label as string | null) ?? null,
+    nivel: r.nivel != null ? Number(r.nivel) : null,
+    valor: r.valor != null ? Number(r.valor) : null,
+    ordem: r.ordem != null ? Number(r.ordem) : null,
+    editavel: (r.editavel as boolean | null) ?? null,
+  }));
+}

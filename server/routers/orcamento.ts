@@ -27,6 +27,8 @@ import {
   type GrupoDreMes,
   type RascunhoOrcamento,
 } from "../orcamento-proposta";
+import { extrairArvoreDre, proporLinhas } from "../orcamento-arvore";
+import { calcularResumoLinhas } from "../orcamento-resumo";
 import { gerarSugestaoIA } from "../orcamento-ia";
 import { storageDownload, storageGetPresignedPutUrl } from "../storage";
 import { resolveDriveItem, listFolderFiles, pickLatestDre, downloadSpFile } from "../sharepoint";
@@ -35,6 +37,7 @@ import {
   aprovarOrcamento as aprovarOrcamentoRascunho,
   registrarDecisao as registrarDecisaoOrcamento,
   getMetasDiarias,
+  salvarLinhas,
 } from "../db-orcamento-v2";
 
 /** Dias de operação padrão usado só para a PRÉVIA de `proporDaDre` (metaDiaria).
@@ -277,7 +280,16 @@ export const orcamentoRouter = router({
       const gruposPorMes = extrairGruposPorMes(buf, input.fileName, undefined, input.meses);
       const rascunho = proporOrcamentoDeterministico(gruposPorMes);
       const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
-      return { rascunho, dre };
+
+      // Task L3 (orçamento linha a linha): além do rascunho agregado acima,
+      // devolve a ÁRVORE COMPLETA da DRE (todas as linhas, Task L1) + o
+      // resumo (EBITDA das FOLHAS, Task L3) — mesmo buffer, mesmo arquivo.
+      // NÃO grava nada (igual ao resto deste fluxo).
+      const mesesArvore = extrairArvoreDre(buf, input.fileName, undefined, input.meses);
+      const linhas = proporLinhas(mesesArvore);
+      const resumo = calcularResumoLinhas(linhas, DIAS_OPERACAO_PREVIEW);
+
+      return { rascunho, dre, linhas, resumo };
     }),
 
   // ── Importação direto do SharePoint (Task S3) ───────────────────────────
@@ -331,9 +343,17 @@ export const orcamentoRouter = router({
       const rascunho = proporOrcamentoDeterministico(gruposPorMes);
       const dre = calcularDre(rascunho, DIAS_OPERACAO_PREVIEW);
 
+      // Task L3 (orçamento linha a linha): mesma ideia de `proporDaDre` —
+      // devolve a árvore completa + resumo das folhas. NÃO grava nada.
+      const mesesArvore = extrairArvoreDre(buf, alvo.name, undefined, input.meses ?? 3);
+      const linhas = proporLinhas(mesesArvore);
+      const resumo = calcularResumoLinhas(linhas, DIAS_OPERACAO_PREVIEW);
+
       return {
         rascunho,
         dre,
+        linhas,
+        resumo,
         fonte: { nome: alvo.name, data: alvo.lastModifiedDateTime },
       };
     }),
@@ -375,6 +395,42 @@ export const orcamentoRouter = router({
         campos: input.campos,
       });
       return { id };
+    }),
+
+  // Task L3 (orçamento linha a linha): grava as LINHAS confirmadas/editadas
+  // pelo gerente (espelhando a árvore da DRE — Task L1/L2). Além de gravar em
+  // `orcamento_linhas` (via `salvarLinhas`), garante o cabeçalho em
+  // `orcamentos` (via `upsertOrcamentoRascunho`) setando ao menos
+  // `receitaBruta` (calculada aqui das próprias linhas, pelas FOLHAS — Task
+  // L3) — é o que `aprovarRascunho`/`gerarMetasDiarias` usam pra gerar as
+  // metas diárias depois.
+  salvarLinhasOrcamento: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      periodoInicio: z.string(),
+      linhas: z.array(z.object({
+        codigo: z.string().min(1),
+        label: z.string().min(1),
+        nivel: z.number().int(),
+        valor: z.number().nullable(),
+        ordem: z.number().int(),
+        editavel: z.boolean(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+
+      const resumo = calcularResumoLinhas(input.linhas, DIAS_OPERACAO_PREVIEW);
+
+      const { id: orcamentoId } = await upsertOrcamentoRascunho({
+        storeId: input.storeId,
+        periodoInicio: input.periodoInicio,
+        campos: { receitaBruta: resumo.receitaBruta },
+      });
+
+      await salvarLinhas(orcamentoId, input.linhas);
+
+      return { orcamentoId };
     }),
 
   // Aprovação do rascunho (Task 5, Fase B): só admin ou supervisor (regional)

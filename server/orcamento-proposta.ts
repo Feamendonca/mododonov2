@@ -51,7 +51,10 @@ export type CategoriaDre =
  * grupo normal). Testada ANTES das categorias — "Lucro Operacional" não
  * pode cair em nenhuma categoria por acidente.
  */
-const REGEX_DERIVADA = /receita\s+l[íi]quida|margem\s+bruta|resultado|lucro|ebitda/i;
+// Ancorada no INÍCIO do rótulo (tolerando prefixos "(=)", "=", "-", espaços)
+// pra NÃO engolir custos reais que só CONTÊM "resultado"/"lucro" no meio —
+// ex.: "Participação nos Lucros e Resultados" (PLR) é custo de folha, não subtotal.
+export const REGEX_DERIVADA = /^[\s=().\-]*(receita\s+l[íi]quida|margem\s+bruta|resultado|lucro|ebitda)/i;
 
 // Ordem importa só por clareza — nenhuma das regex abaixo colide com outra
 // (cada uma exige um termo específico que não aparece nas demais linhas).
@@ -128,7 +131,7 @@ function contarColunasDeMes(sheet: SheetGrid): number {
 }
 
 /** Escolhe, entre as abas lidas, a que tem blocos de coluna de mês (>=3). */
-function escolherAbaDre(sheets: SheetGrid[]): SheetGrid | null {
+export function escolherAbaDre(sheets: SheetGrid[]): SheetGrid | null {
   if (sheets.length === 0) return null;
   let melhor: SheetGrid | null = null;
   let melhorScore = 0;
@@ -141,7 +144,7 @@ function escolherAbaDre(sheets: SheetGrid[]): SheetGrid | null {
 }
 
 /** Detecta a linha de cabeçalho e as colunas de mês ("MM/AAAA" → "YYYY-MM") de uma aba. */
-function detectarColunasDeMes(sheet: SheetGrid): { headerRowIdx: number; colunas: { colIdx: number; anoMes: string }[] } {
+export function detectarColunasDeMes(sheet: SheetGrid): { headerRowIdx: number; colunas: { colIdx: number; anoMes: string }[] } {
   for (let i = 0; i < Math.min(15, sheet.rows.length); i++) {
     const row = sheet.rows[i];
     const encontradas: { colIdx: number; anoMes: string }[] = [];
