@@ -51,7 +51,10 @@ export type CategoriaDre =
  * grupo normal). Testada ANTES das categorias — "Lucro Operacional" não
  * pode cair em nenhuma categoria por acidente.
  */
-export const REGEX_DERIVADA = /receita\s+l[íi]quida|margem\s+bruta|resultado|lucro|ebitda/i;
+// Ancorada no INÍCIO do rótulo (tolerando prefixos "(=)", "=", "-", espaços)
+// pra NÃO engolir custos reais que só CONTÊM "resultado"/"lucro" no meio —
+// ex.: "Participação nos Lucros e Resultados" (PLR) é custo de folha, não subtotal.
+export const REGEX_DERIVADA = /^[\s=().\-]*(receita\s+l[íi]quida|margem\s+bruta|resultado|lucro|ebitda)/i;
 
 // Ordem importa só por clareza — nenhuma das regex abaixo colide com outra
 // (cada uma exige um termo específico que não aparece nas demais linhas).

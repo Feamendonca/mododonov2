@@ -142,7 +142,7 @@ export function calcularResumoLinhas(
   // Quando a árvore passada não contém essa linha (ex.: array já filtrado
   // só com folhas, sem os subtotais), não há corte posicional — vale só a
   // exclusão por label (não-operacional/pró-labore).
-  const REGEX_FRONTEIRA_EBITDA = /resultado\s+operac|ebitda/i;
+  const REGEX_FRONTEIRA_EBITDA = /resultado\s+operac|lucro\s+operac|ebitda/i;
   let fronteiraIdx = -1;
   for (let i = 0; i < linhas.length; i++) {
     if (ehDerivada(linhas[i]) && REGEX_FRONTEIRA_EBITDA.test(linhas[i].label)) {

@@ -58,7 +58,7 @@ interface DreEditavelProps {
 
 // ─── Regex (mesmas de server/orcamento-resumo.ts — ver PONTO CRÍTICO no brief) ─
 
-const REGEX_EBITDA = /resultado\s+operac|ebitda/i;
+const REGEX_EBITDA = /resultado\s+operac|lucro\s+operac|ebitda/i;
 const REGEX_RECEITA_BRUTA = /receita\s+bruta|receita\s+loja/i;
 
 // ─── Helpers de formatação ───────────────────────────────────────────────────
