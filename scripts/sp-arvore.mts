@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getGraphToken, encodeShareUrl, downloadSpFile } from "../server/sharepoint";
 import { extrairArvoreDre, proporLinhas } from "../server/orcamento-arvore";
+import { calcularResumoLinhas } from "../server/orcamento-resumo";
 const url = "https://amfoods534.sharepoint.com/:x:/r/sites/AmFoods/_layouts/15/Doc.aspx?sourcedoc=%7B12014459-1D82-7898-A292-04DB6238E5CB%7D&file=DRE%20Ano26%20BGP%20(AZM).xlsb&action=default&mobileredirect=true&wdwpf=doclib-c";
 try {
   const tok = await getGraphToken();
@@ -33,5 +34,30 @@ try {
       l.natureza.padEnd(10),
       valorFmt,
     );
+  }
+
+  // ─── Validação ao vivo (Task L3): calcularResumoLinhas vs a linha
+  // "RESULTADO OPERACIONAL / EBITDA" pronta na própria DRE ──────────────────
+  const resumo = calcularResumoLinhas(linhas, 30);
+  console.log("\n─── RESUMO (calcularResumoLinhas, pelas FOLHAS) ───");
+  console.log("receitaBruta:", resumo.receitaBruta?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+  console.log("ebitda:      ", resumo.ebitda?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+  console.log("ebitdaPct:   ", resumo.ebitdaPct !== null ? (resumo.ebitdaPct * 100).toFixed(2) + "%" : "null");
+  console.log("metaDiaria:  ", resumo.metaDiaria?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+  console.log("pontoEquilibrio:", resumo.pontoEquilibrio?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+  console.log("parcial:     ", resumo.parcial);
+
+  const linhaEbitdaDre = linhas.find(l => /resultado\s+operacional|ebitda/i.test(l.label) && l.derivada);
+  console.log("\n─── Comparação com a linha pronta da própria DRE ───");
+  if (linhaEbitdaDre) {
+    console.log(`Linha da DRE ("${linhaEbitdaDre.codigo} - ${linhaEbitdaDre.label}"):`, linhaEbitdaDre.histMedia?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+    console.log("ebitda calculado (folhas):                 ", resumo.ebitda?.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) ?? "null");
+    if (resumo.ebitda !== null && linhaEbitdaDre.histMedia !== null) {
+      const diffAbs = resumo.ebitda - linhaEbitdaDre.histMedia;
+      const diffPct = linhaEbitdaDre.histMedia !== 0 ? (diffAbs / linhaEbitdaDre.histMedia) * 100 : null;
+      console.log("diferença:", diffAbs.toLocaleString("pt-BR", { minimumFractionDigits: 2 }), diffPct !== null ? `(${diffPct.toFixed(2)}%)` : "");
+    }
+  } else {
+    console.log("Nenhuma linha derivada 'Resultado Operacional/EBITDA' encontrada na árvore.");
   }
 } catch (e) { console.log("ERRO:", (e as Error).message); }
