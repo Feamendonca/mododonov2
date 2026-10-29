@@ -152,7 +152,8 @@ export function pickLatestDre(files: SpFile[], filter?: string): SpFile | null {
 
   const candidates = files.filter((f) => {
     if (f.name.startsWith("~$")) return false;
-    if (!f.name.toLowerCase().endsWith(".xlsx")) return false;
+    // Aceita os formatos de planilha que o parser suporta — as DREs reais são .xlsb.
+    if (!/\.(xlsx|xlsm|xlsb|xls)$/i.test(f.name)) return false;
     if (filterLower && !f.name.toLowerCase().includes(filterLower)) return false;
     return true;
   });
