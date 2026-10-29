@@ -9,22 +9,32 @@
  * MESMA ordem da planilha, espelhando exatamente a DRE da loja.
  *
  * - Nível-2 (e nível-1 sem filhos / não-derivado — "folha") → input editável.
- * - Nível-1 com filhos (subtotal) → valor = soma ao vivo dos filhos (travado).
+ * - Nível-1 com filhos e NÃO derivado (subtotal de grupo, ex.: RECEITA
+ *   BRUTA) → valor = soma ao vivo dos filhos, mas TAMBÉM editável: digitar
+ *   uma meta `V` nesse campo distribui `V` proporcionalmente entre as
+ *   folhas filhas (`distribuirProporcional`, `shared/orcamento-distribuir.ts`)
+ *   — ver `handleChangeGrupo` abaixo. Edição de baixo pra cima (editar a
+ *   folha) continua funcionando normalmente; os dois caminhos coexistem.
  * - Linha derivada (Receita Líquida, Margem Bruta, Resultado Operacional/
- *   EBITDA, Resultado Final) → valor = histMedia (o número REAL da DRE) +
- *   soma dos deltas (seuValor − proposto) de toda FOLHA posicionada ANTES
- *   dela na árvore — nunca recalculado do zero por categoria (isso é o que
- *   garante o card de EBITDA bater EXATO com a DRE; ver `resolve()` abaixo).
+ *   EBITDA, Resultado Final) → SEMPRE read-only: valor = histMedia (o
+ *   número REAL da DRE) + soma dos deltas (seuValor − proposto) de toda
+ *   FOLHA posicionada ANTES dela na árvore — nunca recalculado do zero por
+ *   categoria (isso é o que garante o card de EBITDA bater EXATO com a DRE;
+ *   ver `resolve()` abaixo).
  * - Campo sem valor (histMedia null) → input/célula em BRANCO. NUNCA 0.
  *
  * Fonte de verdade dos tipos: `LinhaProposta` (server/orcamento-arvore.ts) e
  * `ResumoOrcamento` (server/orcamento-resumo.ts) — import TYPE-ONLY (apagado
  * na compilação), não arrasta `xlsx`/dependências de servidor pro bundle do
- * client (mesmo princípio do arquivo anterior).
+ * client (mesmo princípio do arquivo anterior). `distribuirProporcional` já
+ * é importado em RUNTIME de `shared/` (não `server/`) de propósito — é
+ * lógica pura, sem dependência pesada, reaproveitada do mesmo jeito que
+ * `shared/calculations.ts`/`shared/const.ts`.
  */
 import { useEffect, useMemo, useState } from "react";
 import type { LinhaProposta } from "../../../../server/orcamento-arvore";
 import type { ResumoOrcamento } from "../../../../server/orcamento-resumo";
+import { distribuirProporcional } from "@shared/orcamento-distribuir";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -91,7 +101,17 @@ function KpiCard({ label, value, sub, tone }: { label: string; value: string; su
 
 // ─── Campo de edição (texto livre, formata ao perder o foco) ─────────────────
 
-function ValorInput({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+function ValorInput({
+  value,
+  onChange,
+  destaque,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+  /** Subtotal de grupo editável — mantém o destaque visual (negrito) que a
+   * linha já tinha quando era só um `<span>` read-only. */
+  destaque?: boolean;
+}) {
   const formatLocal = (v: number | null) => (v === null ? "" : String(Math.round(v)));
   const [local, setLocal] = useState(() => formatLocal(value));
   const [focused, setFocused] = useState(false);
@@ -116,7 +136,7 @@ function ValorInput({ value, onChange }: { value: number | null; onChange: (v: n
         if (!isNaN(num)) onChange(num);
       }}
       onBlur={() => { setFocused(false); setLocal(formatLocal(value)); }}
-      className="h-8 text-sm text-right font-mono"
+      className={`h-8 text-sm text-right font-mono${destaque ? " font-semibold" : ""}`}
     />
   );
 }
@@ -247,6 +267,41 @@ export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salva
     setValores((prev) => ({ ...prev, [codigo]: valor }));
   }
 
+  /**
+   * Edição de CIMA pra BAIXO: o gerente digitou uma meta `v` direto no
+   * subtotal de um grupo nível-1 não-derivado (ex.: RECEITA BRUTA). Pega as
+   * folhas filhas (nível-2 cujo `codigo` começa com `${codigoGrupo}.`) e
+   * redistribui `v` entre elas (`distribuirProporcional`), preservando a
+   * proporção atual (ou dividindo igual, se a soma atual for zero) — ver
+   * `shared/orcamento-distribuir.ts`. O subtotal do grupo não guarda estado
+   * próprio: ao atualizar os filhos, `resolve()` já volta a somá-los e o
+   * subtotal passa a exibir exatamente `v` de novo.
+   *
+   * `v === null` (campo apagado) limpa os filhos de volta pro "sem base"
+   * (mesmo espírito de apagar uma folha direto).
+   */
+  function handleChangeGrupo(codigoGrupo: string, v: number | null) {
+    const filhos = linhas.filter((f) => f.nivel === 2 && f.codigo.startsWith(`${codigoGrupo}.`));
+    if (filhos.length === 0) return;
+
+    if (v === null) {
+      setValores((prev) => {
+        const next = { ...prev };
+        for (const f of filhos) next[f.codigo] = null;
+        return next;
+      });
+      return;
+    }
+
+    const atuais = filhos.map((f) => resolve(f.codigo) ?? 0);
+    const distribuidos = distribuirProporcional(v, atuais);
+    setValores((prev) => {
+      const next = { ...prev };
+      filhos.forEach((f, i) => { next[f.codigo] = distribuidos[i]; });
+      return next;
+    });
+  }
+
   function handleSalvarClick() {
     const paraSalvar: LinhaParaSalvar[] = linhas.map((l, i) => ({
       codigo: l.codigo,
@@ -294,6 +349,10 @@ export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salva
           <TableBody>
             {linhas.map((l) => {
               const isSubtotal = l.natureza === "subtotal";
+              // Nível-1, tem filhos, NÃO é derivado (Receita Líquida, Margem
+              // Bruta, EBITDA, Resultado seguem SEMPRE read-only) → meta de
+              // grupo editável, distribui de cima pra baixo nos filhos.
+              const isGrupoEditavel = l.nivel === 1 && l.temFilhos && !l.derivada;
               const atual = resolve(l.codigo);
               const pct =
                 receitaBrutaVivo !== null && receitaBrutaVivo !== 0 && atual !== null
@@ -314,7 +373,13 @@ export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salva
                     {fmtCell(l.proposto)}
                   </TableCell>
                   <TableCell className="text-right w-40">
-                    {isSubtotal ? (
+                    {isGrupoEditavel ? (
+                      <ValorInput
+                        value={atual}
+                        onChange={(v) => handleChangeGrupo(l.codigo, v)}
+                        destaque
+                      />
+                    ) : isSubtotal ? (
                       <span className="text-sm font-mono font-semibold">{fmtCell(atual)}</span>
                     ) : (
                       <ValorInput
