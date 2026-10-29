@@ -1,17 +1,23 @@
 /**
  * OrcamentoPage.tsx
- * Tela de conferência editável do Orçamento (Task 9, Fase B) — REESCRITA.
+ * Tela de conferência editável do Orçamento — Task L4 (reforma "orçamento
+ * linha a linha", ver docs/superpowers/sdd/2026-10-29-orcamento-linha-a-
+ * linha/task-l4-brief.md).
  *
- * Fluxo: o gerente seleciona o mês do orçamento → sobe a DRE histórica →
- * `proporDaDre` lê a planilha e devolve um rascunho determinístico (NUNCA
- * grava) → o gerente confere/edita linha a linha em `DreEditavel` → pode
- * pedir uma sugestão da IA (aditiva, nunca sobrescreve o que ele já editou)
- * → salva o rascunho (`salvarRascunho`) → admin/supervisor aprova
- * (`aprovarRascunho`), o que gera as metas diárias automaticamente.
+ * Fluxo: o gerente seleciona o mês do orçamento → sobe a DRE histórica (ou
+ * puxa do SharePoint) → `proporDaDre`/`importarDoSharePoint` leem a planilha
+ * e devolvem a ÁRVORE COMPLETA (`linhas`, Task L1) + o `resumo` (Task L3) —
+ * NUNCA gravam → o gerente confere/edita TODAS as linhas da DRE em
+ * `DreEditavel` (tabela dinâmica, espelha a DRE) → salva o rascunho
+ * (`salvarLinhasOrcamento`) → admin/supervisor aprova (`aprovarRascunho`),
+ * o que gera as metas diárias automaticamente.
  *
- * O fluxo legado da Fase A (orçamento manual linha-a-linha + assistente de
- * IA "simularPorMeta"/OrcamentoAssistidoPage) foi aposentado nesta tarefa —
- * ver report da Task 9.
+ * `rascunho` (o agregado da Fase B, ainda devolvido pelos mesmos endpoints)
+ * é mantido SÓ para o banner de "loja em atenção"/decisão seguir-encerrar
+ * (Task 7, Fase B) — não alimenta mais a tabela, que usa exclusivamente
+ * `linhas`/`resumo`. A "Sugestão da IA" (Task 8, Fase B) não fazia sentido
+ * no novo modelo (campos antigos vs. `codigo` da árvore) e foi removida
+ * nesta reforma.
  */
 import { useRef, useState } from "react";
 import { TRPCClientError } from "@trpc/client";
@@ -22,11 +28,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
-  Upload, Sparkles, Loader2, CheckCircle2, AlertTriangle,
+  Upload, Loader2, CheckCircle2, AlertTriangle,
   FileSpreadsheet, ThumbsUp, XCircle, Target, Cloud,
 } from "lucide-react";
-import DreEditavel, { type SugestaoIA, type CamposParaSalvar } from "@/components/orcamento/DreEditavel";
-import type { RascunhoOrcamento, DreCalculada } from "../../../server/orcamento-proposta";
+import DreEditavel, { type LinhaParaSalvar } from "@/components/orcamento/DreEditavel";
+import type { RascunhoOrcamento } from "../../../server/orcamento-proposta";
+import type { LinhaProposta } from "../../../server/orcamento-arvore";
+import type { ResumoOrcamento } from "../../../server/orcamento-resumo";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -96,17 +104,19 @@ export default function OrcamentoPage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // `rascunho` segue vindo do endpoint (agregado da Fase B) só pro banner de
+  // "loja em atenção"/decisão — a tabela usa `linhas`/`resumo` (Task L1/L3).
   const [rascunho, setRascunho] = useState<RascunhoOrcamento | null>(null);
-  const [dreInicial, setDreInicial] = useState<DreCalculada | null>(null);
-  const [sugestao, setSugestao] = useState<SugestaoIA | null>(null);
+  const [linhas, setLinhas] = useState<LinhaProposta[] | null>(null);
+  const [resumo, setResumo] = useState<ResumoOrcamento | null>(null);
   const [orcamentoId, setOrcamentoId] = useState<number | null>(null);
   const [aprovado, setAprovado] = useState(false);
   const [fonteSharepoint, setFonteSharepoint] = useState<{ nome: string; data: string } | null>(null);
 
   function resetRascunho() {
     setRascunho(null);
-    setDreInicial(null);
-    setSugestao(null);
+    setLinhas(null);
+    setResumo(null);
     setOrcamentoId(null);
     setAprovado(false);
     setFileName(null);
@@ -126,8 +136,8 @@ export default function OrcamentoPage() {
   const proporMut = trpc.orcamento.proporDaDre.useMutation({
     onSuccess: (data) => {
       setRascunho(data.rascunho);
-      setDreInicial(data.dre);
-      setSugestao(null);
+      setLinhas(data.linhas);
+      setResumo(data.resumo);
       setOrcamentoId(null);
       setAprovado(false);
       setFonteSharepoint(null);
@@ -139,8 +149,8 @@ export default function OrcamentoPage() {
   const importarSpMut = trpc.orcamento.importarDoSharePoint.useMutation({
     onSuccess: (data) => {
       setRascunho(data.rascunho);
-      setDreInicial(data.dre);
-      setSugestao(null);
+      setLinhas(data.linhas);
+      setResumo(data.resumo);
       setOrcamentoId(null);
       setAprovado(false);
       setFileName(null);
@@ -150,18 +160,23 @@ export default function OrcamentoPage() {
     onError: (e) => toast.error(mensagemErroSharepoint(e)),
   });
 
-  const sugestaoMut = trpc.orcamento.sugestaoIA.useMutation({
-    onSuccess: (data) => {
-      setSugestao(data);
-      toast.success("Sugestão da IA aplicada nos campos ainda não editados.");
-    },
-    onError: () => toast.error("Não foi possível gerar a sugestão da IA agora."),
-  });
+  // `salvarRascunho` (campos agregados) continua existindo só pra persistir
+  // `emAtencao`/`rampaMeses` (Task 7, Fase B) junto do rascunho de linhas —
+  // silencioso (sem toast próprio), disparado depois que `salvarLinhasMut`
+  // confirma. A gravação dos VALORES em si é 100% via `salvarLinhasOrcamento`.
+  const salvarEmAtencaoMut = trpc.orcamento.salvarRascunho.useMutation();
 
-  const salvarMut = trpc.orcamento.salvarRascunho.useMutation({
+  const salvarLinhasMut = trpc.orcamento.salvarLinhasOrcamento.useMutation({
     onSuccess: (data) => {
-      setOrcamentoId(data.id);
+      setOrcamentoId(data.orcamentoId);
       toast.success("Rascunho salvo.");
+      if (rascunho) {
+        salvarEmAtencaoMut.mutate({
+          storeId,
+          periodoInicio,
+          campos: { emAtencao: rascunho.emAtencao, rampaMeses: rascunho.rampaMeses },
+        });
+      }
     },
     onError: (e) => toast.error("Erro ao salvar: " + e.message),
   });
@@ -217,14 +232,9 @@ export default function OrcamentoPage() {
     importarSpMut.mutate({ storeId });
   }
 
-  function handleSugestaoIA() {
-    if (!rascunho) return;
-    sugestaoMut.mutate({ storeId, historico: [], rascunho });
-  }
-
-  function handleSalvar(campos: CamposParaSalvar) {
+  function handleSalvar(linhasParaSalvar: LinhaParaSalvar[]) {
     if (!storeId) { toast.error("Selecione uma loja."); return; }
-    salvarMut.mutate({ storeId, periodoInicio, campos });
+    salvarLinhasMut.mutate({ storeId, periodoInicio, linhas: linhasParaSalvar });
   }
 
   function handleAprovar() {
@@ -241,6 +251,9 @@ export default function OrcamentoPage() {
   const carregandoProposta = proporMut.isPending || uploading;
   const carregandoSharepoint = importarSpMut.isPending;
   const prazoDecisao = rascunho?.emAtencao && rascunho.rampaMeses ? calcularPrazo(periodoInicio, rascunho.rampaMeses) : null;
+  // Dias do CALENDÁRIO do mês do período (não "dias de operação" digitado) —
+  // mesmo divisor usado por `gerarMetasDiarias` (server/db-orcamento-v2.ts).
+  const diasNoMes = new Date(ano, mes, 0).getDate();
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -352,24 +365,14 @@ export default function OrcamentoPage() {
         </div>
       )}
 
-      {/* Sugestão da IA */}
-      {rascunho && (
-        <div className="flex justify-end">
-          <Button variant="outline" size="sm" onClick={handleSugestaoIA} disabled={sugestaoMut.isPending}>
-            {sugestaoMut.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
-            Sugestão da IA
-          </Button>
-        </div>
-      )}
-
-      {/* Tabela editável */}
-      {rascunho && dreInicial && (
+      {/* Tabela dinâmica — espelha a árvore completa da DRE (Task L4) */}
+      {linhas && resumo && (
         <DreEditavel
-          rascunho={rascunho}
-          dre={dreInicial}
-          sugestao={sugestao}
+          linhas={linhas}
+          resumo={resumo}
+          diasNoMes={diasNoMes}
           onSalvar={handleSalvar}
-          salvando={salvarMut.isPending}
+          salvando={salvarLinhasMut.isPending}
         />
       )}
 
