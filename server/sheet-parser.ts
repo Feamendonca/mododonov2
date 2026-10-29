@@ -39,7 +39,14 @@ export interface SpreadsheetParseResult {
   fileName: string;
 }
 
-const MAX_ROWS_PER_SHEET = 300;
+// DREs reais (ex.: Bella Gula) têm sub-linhas nível-3 (N.M.K) que consomem
+// muito espaço — a aba "DRE" completa (grupos 1-19, com sub-linhas) chega a
+// ~430 linhas. Com 300, a árvore era TRUNCADA antes de chegar nos grupos
+// finais (Ocupação, Financeiras, Outras despesas, Resultado/EBITDA) — bug
+// pré-existente que afetava `extrairGruposPorMes` silenciosamente (groups
+// 11+ nunca eram lidos) e teria quebrado `extrairArvoreDre` (Task L1) do
+// mesmo jeito. 1000 dá margem confortável sem impacto de performance.
+const MAX_ROWS_PER_SHEET = 1000;
 const MAX_AUTO_SHEETS = 5;
 
 /**
