@@ -27,9 +27,10 @@ import {
   type GrupoDreMes,
   type RascunhoOrcamento,
 } from "../orcamento-proposta";
-import { extrairArvoreDre, proporLinhas } from "../orcamento-arvore";
+import { extrairArvoreDre, proporLinhas, type LinhaProposta } from "../orcamento-arvore";
 import { calcularResumoLinhas } from "../orcamento-resumo";
 import { gerarSugestaoIA } from "../orcamento-ia";
+import { gerarPlanoIA, type MetaInput } from "../orcamento-plano-ia";
 import { storageDownload, storageGetPresignedPutUrl } from "../storage";
 import { resolveDriveItem, listFolderFiles, pickLatestDre, downloadSpFile } from "../sharepoint";
 import {
@@ -377,6 +378,33 @@ export const orcamentoRouter = router({
       return gerarSugestaoIA({
         historico: input.historico as GrupoDreMes[],
         rascunho: input.rascunho as RascunhoOrcamento,
+      });
+    }),
+
+  // Task P2 (Proposto Inteligente): liga o motor da IA (P1, orcamento-plano-ia.ts)
+  // ao app. O gestor define a meta → a IA sugere, linha a linha, um plano
+  // viável + um plano de batalha + se a meta bate. Igual a `sugestaoIA`: a IA
+  // NÃO lê planilha (recebe `linhas`/`anoMeses` já extraídas pelo cliente a
+  // partir de `proporDaDre`/`importarDoSharePoint`) e NÃO grava nada — é
+  // sugestão pura; o gestor aplica editando o "Seu valor" na tela, que já
+  // grava via `salvarLinhasOrcamento`. Fallback silencioso embutido em
+  // `gerarPlanoIA`: qualquer erro de LLM vira um PlanoIA vazio, sem lançar.
+  gerarPlanoIA: protectedProcedure
+    .input(z.object({
+      storeId: z.number().int(),
+      linhas: z.array(z.any()),
+      anoMeses: z.array(z.string()),
+      meta: z.object({
+        tipo: z.enum(["ebitda_rs", "ebitda_pct", "melhoria_pct"]),
+        valor: z.number(),
+      }),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      return gerarPlanoIA({
+        linhas: input.linhas as LinhaProposta[],
+        anoMeses: input.anoMeses,
+        meta: input.meta as MetaInput,
       });
     }),
 
