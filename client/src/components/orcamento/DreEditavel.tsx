@@ -330,15 +330,16 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
 
   // ── Proposto Inteligente (Task P3): sugestões da IA por linha ─────────────
   // `planoIA` vem SÓ depois que o gestor clica "Gerar plano da IA"
-  // (OrcamentoPage). `linhas: []` = fallback silencioso do servidor (a LLM
-  // falhou) — tratamos como "sem sugestões" aqui, e a página mostra o aviso.
+  // (OrcamentoPage). Fix do review (Task P4): usa o flag EXPLÍCITO
+  // `indisponivel` (não mais inferir pela lista vazia) — senão "IA caiu" e
+  // "IA respondeu válido mas sem sugestões" ficavam indistinguíveis.
   const planoPorCodigo = useMemo(() => {
     const m = new Map<string, PlanoIA["linhas"][number]>();
     for (const l of planoIA?.linhas ?? []) m.set(l.codigo, l);
     return m;
   }, [planoIA]);
   const temSugestoes = planoPorCodigo.size > 0;
-  const planoFalhou = planoIA != null && planoIA.linhas.length === 0;
+  const planoFalhou = planoIA?.indisponivel === true;
 
   /** Copia o `propostoIA` de cada linha sugerida pro "Seu valor" — o gestor
    * continua podendo editar livremente depois (a IA sugere, o gestor
@@ -404,7 +405,7 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
           <AlertTriangle size={16} className="flex-shrink-0" />
           <div className="flex-1">
             <div className="font-semibold">Não consegui gerar o plano agora</div>
-            <div>Tente de novo em alguns instantes — os valores da tabela continuam como estavam.</div>
+            <div>{planoIA?.meta.motivo || "Tente de novo em alguns instantes — os valores da tabela continuam como estavam."}</div>
           </div>
         </div>
       )}

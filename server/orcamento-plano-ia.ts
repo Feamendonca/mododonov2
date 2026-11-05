@@ -32,6 +32,7 @@
 import { invokeLLM } from "./_core/llm";
 import { MODEL_DEEP } from "./_core/llm-models";
 import type { LinhaProposta } from "./orcamento-arvore";
+import { calcularResumoLinhas } from "./orcamento-resumo";
 
 export type MetaInput =
   | { tipo: "ebitda_rs"; valor: number }
@@ -62,6 +63,15 @@ export interface PlanoIA {
     atingiuMeta: boolean;
     motivo: string;
   };
+  /**
+   * Fix do review (Task P4): flag EXPLÍCITO de que a IA caiu (erro de rede,
+   * JSON inválido, formato fora do schema) — SEM isso, a tela não tinha como
+   * distinguir "IA indisponível" de "IA respondeu, só que válida e sem
+   * sugestões" (`linhas: []` nos dois casos). `true` SÓ no fallback
+   * silencioso (`FALLBACK_VAZIO`); ausente (undefined) em qualquer resposta
+   * que a IA de fato devolveu, mesmo que vazia.
+   */
+  indisponivel?: boolean;
 }
 
 export interface RetratoLinha {
@@ -79,6 +89,7 @@ const FALLBACK_VAZIO: PlanoIA = {
   linhas: [],
   planoBatalha: [],
   meta: { alvoRs: null, alcancadoRs: null, atingiuMeta: false, motivo: "IA indisponível" },
+  indisponivel: true,
 };
 
 /**
@@ -142,6 +153,82 @@ export function montarRetratoLinhas(linhas: LinhaProposta[], anoMeses: string[])
     });
 }
 
+export interface RetratoEbitda {
+  /** EBITDA de cada mês, na mesma ordem de `anoMeses` (mês sem base → null). */
+  porMes: (number | null)[];
+  melhor: number | null;
+  pior: number | null;
+  media: number | null;
+  /** Receita bruta média dos 3 meses (determinística, mesma base do resumo
+   * vivo da tela) — usada pra converter `ebitda_pct` em R$. */
+  receitaMedia: number | null;
+}
+
+/**
+ * Fix do review (Task P4): ancora o EBITDA/alvo da meta no CÓDIGO em vez de
+ * deixar a LLM somar dezenas de folhas (risco de erro de aritmética no
+ * número que vira a META). Reusa `calcularResumoLinhas` (já determinístico,
+ * já testado) por MÊS — pra cada índice de mês, monta uma "foto" das linhas
+ * com `proposto = porMes[indice]` e deixa `calcularResumoLinhas` somar as
+ * folhas operacionais igual já faz pro resumo vivo da tela.
+ */
+export function calcularRetratoEbitda(linhas: LinhaProposta[], anoMeses: string[]): RetratoEbitda {
+  const DIAS_FICTICIOS = 30; // irrelevante aqui — só ebitda/receitaBruta interessam.
+
+  const porMes = anoMeses.map((_, i) => {
+    const linhasDoMes: LinhaProposta[] = linhas.map((l) => ({ ...l, proposto: l.porMes[i] ?? null }));
+    return calcularResumoLinhas(linhasDoMes, DIAS_FICTICIOS).ebitda;
+  });
+
+  const naoNulos = porMes.filter((v): v is number => v !== null);
+  const melhor = naoNulos.length > 0 ? Math.max(...naoNulos) : null;
+  const pior = naoNulos.length > 0 ? Math.min(...naoNulos) : null;
+  const media = naoNulos.length > 0 ? naoNulos.reduce((s, v) => s + v, 0) / naoNulos.length : null;
+
+  // Receita média: mesma base do resumo vivo da tela (`proposto` de cada
+  // linha já é a média dos 3 meses — ver `proporLinhas`/orcamento-arvore.ts).
+  const receitaMedia = calcularResumoLinhas(linhas, DIAS_FICTICIOS).receitaBruta;
+
+  return { porMes, melhor, pior, media, receitaMedia };
+}
+
+/**
+ * Converte a `MetaInput` do gestor num `alvoRs` DETERMINÍSTICO — nunca deixa
+ * a LLM decidir esse número.
+ *  - `ebitda_rs`: o valor já é o alvo em R$.
+ *  - `ebitda_pct`: valor em PONTOS percentuais (ex.: 20 = 20%) × receita
+ *    média (determinística).
+ *  - `melhoria_pct`: valor em pontos percentuais de melhoria sobre o MELHOR
+ *    mês de EBITDA já realizado (pedido do Fernando: "melhor que os outros
+ *    meses" — não a média).
+ * Sem base suficiente no retrato pra converter → `null` (nunca chuta).
+ */
+export function calcularAlvoRs(meta: MetaInput, retrato: RetratoEbitda): number | null {
+  switch (meta.tipo) {
+    case "ebitda_rs":
+      return meta.valor;
+    case "ebitda_pct":
+      return retrato.receitaMedia !== null ? (meta.valor / 100) * retrato.receitaMedia : null;
+    case "melhoria_pct":
+      return retrato.melhor !== null ? retrato.melhor * (1 + meta.valor / 100) : null;
+  }
+}
+
+function montarContextoEbitda(retrato: RetratoEbitda, anoMeses: string[], alvoRsDeterministico: number | null): string {
+  const porMesTexto = anoMeses
+    .map((am, i) => `${am}: ${retrato.porMes[i] !== null ? retrato.porMes[i] : "sem base"}`)
+    .join(", ");
+  return `CONTEXTO DETERMINÍSTICO DO EBITDA (calculado pelo CÓDIGO, somando as folhas operacionais mês a mês — NÃO recalcule isso, use como referência):
+- EBITDA por mês: ${porMesTexto}
+- Melhor mês de EBITDA: ${retrato.melhor !== null ? retrato.melhor : "sem base"}
+- Pior mês de EBITDA: ${retrato.pior !== null ? retrato.pior : "sem base"}
+- Média de EBITDA dos 3 meses: ${retrato.media !== null ? retrato.media : "sem base"}
+- Receita bruta média dos 3 meses: ${retrato.receitaMedia !== null ? retrato.receitaMedia : "sem base"}
+- alvoRs JÁ CALCULADO pelo código a partir da meta do gestor: ${alvoRsDeterministico !== null ? alvoRsDeterministico : "sem base suficiente pra converter a meta em R$"}
+
+IMPORTANTE: o campo "meta.alvoRs" que você devolver será SOBRESCRITO pelo código com o valor acima, de qualquer forma — você não precisa (e não deve) recalculá-lo. Use esse alvoRs só como referência pra julgar se o conjunto de "propostoIA" das linhas bate a meta (campo "atingiuMeta") e pra explicar o gap em "motivo".`;
+}
+
 const SYSTEM_PROMPT = `Você é um analista financeiro especializado em restaurantes e franquias no Brasil. Sua função é transformar a DRE de uma loja num PLANO VIÁVEL, linha a linha, pra o gestor atingir uma META que ele definiu.
 
 Você recebe, JÁ EXTRAÍDO pelo código (determinístico): o retrato dos últimos 3 meses de cada linha FOLHA da DRE (melhor mês, pior mês, média, e o valor de cada mês individual) e a meta do gestor. Você NUNCA lê planilha, NUNCA tem acesso a arquivos brutos, NUNCA recebe nem precisa inferir nada além do que está no retrato.
@@ -165,7 +252,7 @@ Além das linhas, você devolve, SEPARADO (não é ação por linha, é um bloco
 - "planoBatalha": lista de ações práticas, cada uma com { titulo, descricao, linhasAfetadas (códigos das linhas que essa ação sustenta), impactoEstimadoRs (número ou null se não houver base pra estimar), prioridade }.
 
 E fecha a conta em "meta":
-- "alvoRs": o alvo de EBITDA em R$ que você calculou a partir da meta recebida (converta ebitda_pct/melhoria_pct pra R$ usando os números do retrato; se não houver base suficiente pra converter, null).
+- "alvoRs": você recebe esse valor JÁ CALCULADO pelo código (ver bloco "CONTEXTO DETERMINÍSTICO DO EBITDA" na mensagem) — copie esse número (o código sobrescreve de qualquer forma, então nunca recalcule do zero).
 - "alcancadoRs": o EBITDA que o conjunto de propostoIA das linhas alcança (receitas somadas menos custos somados, em módulo coerente com o sinal de cada linha).
 - "atingiuMeta": true se alcancadoRs >= alvoRs (quando ambos não-null); false caso contrário.
 - "motivo": se não bateu a meta, explique o gap com uma frase curta e concreta (ex.: "com ajustes realistas chega em R$ 92k, não R$ 100k — o gap é no faturamento"); se bateu, pode deixar uma frase curta de confirmação ou string vazia.
@@ -174,9 +261,16 @@ Regras duras, sem exceção:
 - Você só SUGERE. Você NUNCA decide, NUNCA grava, NUNCA aplica nada — quem decide é o gestor humano.
 - Responda SOMENTE no formato JSON pedido, nada fora do schema.`;
 
-function montarPromptUsuario(retrato: RetratoLinha[], anoMeses: string[], meta: MetaInput): string {
+function montarPromptUsuario(
+  retrato: RetratoLinha[],
+  anoMeses: string[],
+  meta: MetaInput,
+  retratoEbitda: RetratoEbitda,
+  alvoRsDeterministico: number | null,
+): string {
   const retratoTexto = JSON.stringify(retrato, null, 2);
   const metaTexto = JSON.stringify(meta, null, 2);
+  const contextoEbitda = montarContextoEbitda(retratoEbitda, anoMeses, alvoRsDeterministico);
 
   return `MESES CONSIDERADOS (ordem cronológica): ${anoMeses.join(", ")}
 
@@ -185,6 +279,8 @@ ${retratoTexto}
 
 META DO GESTOR:
 ${metaTexto}
+
+${contextoEbitda}
 
 Com base SOMENTE nesses números, gere o plano: propostoIA/porque/confianca por linha, o planoBatalha consolidado, e feche a conta da meta.`;
 }
@@ -303,11 +399,20 @@ export async function gerarPlanoIA(input: {
   try {
     const retrato = montarRetratoLinhas(input.linhas, input.anoMeses);
 
+    // Fix do review (Task P4): o EBITDA/alvo da meta é calculado AQUI, pelo
+    // CÓDIGO — nunca deixado pra LLM somar dezenas de folhas (risco de erro
+    // de aritmética no número que vira a META).
+    const retratoEbitda = calcularRetratoEbitda(input.linhas, input.anoMeses);
+    const alvoRsDeterministico = calcularAlvoRs(input.meta, retratoEbitda);
+
     const response = await invokeLLM({
       model: MODEL_DEEP,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: montarPromptUsuario(retrato, input.anoMeses, input.meta) },
+        {
+          role: "user",
+          content: montarPromptUsuario(retrato, input.anoMeses, input.meta, retratoEbitda, alvoRsDeterministico),
+        },
       ],
       response_format: {
         type: "json_schema",
@@ -321,7 +426,10 @@ export async function gerarPlanoIA(input: {
     const parsed: unknown = JSON.parse(content);
     if (!ehPlanoIAValido(parsed)) return FALLBACK_VAZIO;
 
-    return parsed;
+    // Garantia dura: o número-alvo quem monta é o CÓDIGO, nunca a LLM —
+    // sobrescreve `meta.alvoRs` com o determinístico mesmo que a LLM tenha
+    // devolvido outro valor (ela só deveria copiar, mas não confiamos nisso).
+    return { ...parsed, meta: { ...parsed.meta, alvoRs: alvoRsDeterministico } };
   } catch {
     return FALLBACK_VAZIO;
   }

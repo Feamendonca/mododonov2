@@ -32,7 +32,7 @@ vi.mock("./db-orcamento-v2", async () => {
   };
 });
 
-import { montarRetratoLinhas, gerarPlanoIA } from "./orcamento-plano-ia";
+import { montarRetratoLinhas, gerarPlanoIA, calcularRetratoEbitda, calcularAlvoRs } from "./orcamento-plano-ia";
 import type { PlanoIA, MetaInput } from "./orcamento-plano-ia";
 import type { LinhaProposta } from "./orcamento-arvore";
 
@@ -134,6 +134,45 @@ describe("montarRetratoLinhas", () => {
   });
 });
 
+describe("calcularRetratoEbitda", () => {
+  it("calcula o EBITDA por mês somando as folhas operacionais (receita + custo), determinístico", () => {
+    const retrato = calcularRetratoEbitda(linhasFixture, anoMeses);
+
+    // mês 0: receita 680000 + custo -210000 = 470000
+    // mês 1: receita 700000 + custo -200000 = 500000
+    // mês 2: receita 720000 + custo -195000 = 525000
+    expect(retrato.porMes).toEqual([470000, 500000, 525000]);
+    expect(retrato.melhor).toBe(525000);
+    expect(retrato.pior).toBe(470000);
+    expect(retrato.media).toBeCloseTo((470000 + 500000 + 525000) / 3);
+    expect(retrato.receitaMedia).toBeCloseTo(700000);
+  });
+});
+
+describe("calcularAlvoRs", () => {
+  const retrato = calcularRetratoEbitda(linhasFixture, anoMeses);
+
+  it("ebitda_rs: alvoRs é o valor direto da meta", () => {
+    expect(calcularAlvoRs({ tipo: "ebitda_rs", valor: 120000 }, retrato)).toBe(120000);
+  });
+
+  it("ebitda_pct: alvoRs = valor% × receita média", () => {
+    // 20% de 700000 = 140000
+    expect(calcularAlvoRs({ tipo: "ebitda_pct", valor: 20 }, retrato)).toBeCloseTo(140000);
+  });
+
+  it("melhoria_pct: alvoRs = melhor mês × (1 + valor%)", () => {
+    // melhor mês = 525000; 15% de melhoria → 525000 * 1.15 = 603750
+    expect(calcularAlvoRs({ tipo: "melhoria_pct", valor: 15 }, retrato)).toBeCloseTo(603750);
+  });
+
+  it("sem base (retrato vazio) → alvoRs null, nunca chuta", () => {
+    const retratoVazio = { porMes: [null, null, null], melhor: null, pior: null, media: null, receitaMedia: null };
+    expect(calcularAlvoRs({ tipo: "ebitda_pct", valor: 20 }, retratoVazio)).toBeNull();
+    expect(calcularAlvoRs({ tipo: "melhoria_pct", valor: 15 }, retratoVazio)).toBeNull();
+  });
+});
+
 describe("gerarPlanoIA", () => {
   const meta: MetaInput = { tipo: "ebitda_rs", valor: 120000 };
 
@@ -175,6 +214,7 @@ describe("gerarPlanoIA", () => {
       linhas: [],
       planoBatalha: [],
       meta: { alvoRs: null, alcancadoRs: null, atingiuMeta: false, motivo: "IA indisponível" },
+      indisponivel: true,
     });
   });
 
@@ -185,6 +225,7 @@ describe("gerarPlanoIA", () => {
       linhas: [],
       planoBatalha: [],
       meta: { alvoRs: null, alcancadoRs: null, atingiuMeta: false, motivo: "IA indisponível" },
+      indisponivel: true,
     });
   });
 
@@ -197,7 +238,24 @@ describe("gerarPlanoIA", () => {
       linhas: [],
       planoBatalha: [],
       meta: { alvoRs: null, alcancadoRs: null, atingiuMeta: false, motivo: "IA indisponível" },
+      indisponivel: true,
     });
+  });
+
+  it("flag indisponivel é diferente de 'IA respondeu com linhas vazias válidas'", async () => {
+    // Resposta VÁLIDA da LLM, só que sem sugestões (ex.: histórico insuficiente
+    // em todas as linhas) — isso NÃO é "IA caiu", é "IA não teve o que sugerir".
+    const planoVazioValido: PlanoIA = {
+      linhas: [],
+      planoBatalha: [],
+      meta: { alvoRs: 120000, alcancadoRs: null, atingiuMeta: false, motivo: "sem base suficiente" },
+    };
+    mockInvokeLLMResolve(JSON.stringify(planoVazioValido));
+
+    const resultado = await gerarPlanoIA({ linhas: linhasFixture, anoMeses, meta });
+
+    expect(resultado.linhas).toEqual([]);
+    expect(resultado.indisponivel).not.toBe(true);
   });
 
   it("não grava nada — só chama invokeLLM, nunca salvarLinhas", async () => {
@@ -207,6 +265,37 @@ describe("gerarPlanoIA", () => {
 
     expect(invokeLLMMock).toHaveBeenCalledTimes(1);
     expect(salvarLinhasMock).not.toHaveBeenCalled();
+  });
+
+  it("sobrescreve meta.alvoRs com o determinístico mesmo se a LLM mandar outro número", async () => {
+    const metaMelhoria: MetaInput = { tipo: "melhoria_pct", valor: 15 };
+    const planoComAlvoErrado: PlanoIA = {
+      linhas: [],
+      planoBatalha: [],
+      // LLM "chutou" um alvoRs qualquer, errado (deveria ser 603750 — 15% sobre
+      // o melhor mês de EBITDA, 525000).
+      meta: { alvoRs: 999999, alcancadoRs: 500000, atingiuMeta: false, motivo: "" },
+    };
+    mockInvokeLLMResolve(JSON.stringify(planoComAlvoErrado));
+
+    const resultado = await gerarPlanoIA({ linhas: linhasFixture, anoMeses, meta: metaMelhoria });
+
+    expect(resultado.meta.alvoRs).toBeCloseTo(603750);
+    expect(resultado.meta.alvoRs).not.toBe(999999);
+    // alcancadoRs continua vindo da IA (não é recalculado nesta task).
+    expect(resultado.meta.alcancadoRs).toBe(500000);
+  });
+
+  it("injeta o contexto determinístico do EBITDA (por mês/melhor/pior/média/alvoRs) no prompt do usuário", async () => {
+    mockInvokeLLMResolve(JSON.stringify({ linhas: [], planoBatalha: [], meta: { alvoRs: null, alcancadoRs: null, atingiuMeta: false, motivo: "x" } }));
+
+    await gerarPlanoIA({ linhas: linhasFixture, anoMeses, meta });
+
+    const callArgs = invokeLLMMock.mock.calls[0][0];
+    const userMsg = callArgs.messages.find((m: { role: string }) => m.role === "user").content as string;
+    expect(userMsg).toContain("525000"); // melhor mês de EBITDA
+    expect(userMsg).toContain("470000"); // pior mês de EBITDA
+    expect(userMsg).toContain("120000"); // alvoRs determinístico (ebitda_rs direto)
   });
 
   it("chama invokeLLM com MODEL_DEEP e response_format json_schema", async () => {

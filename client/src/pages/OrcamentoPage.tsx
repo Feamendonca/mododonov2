@@ -215,13 +215,16 @@ export default function OrcamentoPage() {
 
   // Proposto Inteligente: a IA sugere, o gestor decide — fallback silencioso
   // já vem do servidor (`gerarPlanoIA` nunca lança; devolve `PlanoIA` vazio
-  // com `linhas: []` se a LLM falhar), então aqui só tratamos o caso feliz +
-  // o aviso amigável de plano vazio (ver `DreEditavel`).
+  // com `indisponivel: true` se a LLM falhar), então aqui só tratamos o caso
+  // feliz + o aviso amigável de falha (ver `DreEditavel`). Fix do review
+  // (Task P4): usa o flag EXPLÍCITO `indisponivel` — não mais `linhas.length
+  // === 0`, que confundia "IA caiu" com "IA respondeu válido mas sem
+  // sugestões" (histórico insuficiente em todas as linhas).
   const gerarPlanoMut = trpc.orcamento.gerarPlanoIA.useMutation({
     onSuccess: (data) => {
       setPlanoIA(data);
-      if (data.linhas.length === 0) {
-        toast.error("Não consegui gerar o plano agora, tente de novo.");
+      if (data.indisponivel) {
+        toast.error(data.meta.motivo || "Não consegui gerar o plano agora, tente de novo.");
       } else {
         toast.success("Plano da IA gerado. Confira as sugestões na tabela.");
       }
