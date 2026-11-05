@@ -26,15 +26,20 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { useStore } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Upload, Loader2, CheckCircle2, AlertTriangle,
-  FileSpreadsheet, ThumbsUp, XCircle, Target, Cloud,
+  FileSpreadsheet, ThumbsUp, XCircle, Target, Cloud, Sparkles,
 } from "lucide-react";
 import DreEditavel, { type LinhaParaSalvar } from "@/components/orcamento/DreEditavel";
 import type { RascunhoOrcamento } from "../../../server/orcamento-proposta";
 import type { LinhaProposta } from "../../../server/orcamento-arvore";
 import type { ResumoOrcamento } from "../../../server/orcamento-resumo";
+import type { PlanoIA } from "../../../server/orcamento-plano-ia";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -114,6 +119,11 @@ export default function OrcamentoPage() {
   const [aprovado, setAprovado] = useState(false);
   const [fonteSharepoint, setFonteSharepoint] = useState<{ nome: string; data: string } | null>(null);
 
+  // ── Proposto Inteligente: meta + plano da IA (Task P3) ─────────────────────
+  const [metaTipo, setMetaTipo] = useState<"ebitda_rs" | "ebitda_pct" | "melhoria_pct">("ebitda_rs");
+  const [metaValor, setMetaValor] = useState("");
+  const [planoIA, setPlanoIA] = useState<PlanoIA | null>(null);
+
   function resetRascunho() {
     setRascunho(null);
     setLinhas(null);
@@ -123,6 +133,7 @@ export default function OrcamentoPage() {
     setAprovado(false);
     setFileName(null);
     setFonteSharepoint(null);
+    setPlanoIA(null);
   }
 
   function handleChangePeriodo(novoMes: number, novoAno: number) {
@@ -144,6 +155,7 @@ export default function OrcamentoPage() {
       setOrcamentoId(null);
       setAprovado(false);
       setFonteSharepoint(null);
+      setPlanoIA(null);
       toast.success("Proposta gerada a partir da DRE. Confira os valores abaixo.");
     },
     onError: (e) => toast.error("Erro ao ler a DRE: " + e.message),
@@ -159,6 +171,7 @@ export default function OrcamentoPage() {
       setAprovado(false);
       setFileName(null);
       setFonteSharepoint(data.fonte);
+      setPlanoIA(null);
       toast.success("DRE importada do SharePoint. Confira os valores abaixo.");
     },
     onError: (e) => toast.error(mensagemErroSharepoint(e)),
@@ -198,6 +211,22 @@ export default function OrcamentoPage() {
       toast.success(vars.decisao === "seguir" ? "Decisão registrada: seguir mais um ciclo." : "Decisão registrada: encerrar.");
     },
     onError: (e) => toast.error("Erro ao registrar decisão: " + e.message),
+  });
+
+  // Proposto Inteligente: a IA sugere, o gestor decide — fallback silencioso
+  // já vem do servidor (`gerarPlanoIA` nunca lança; devolve `PlanoIA` vazio
+  // com `linhas: []` se a LLM falhar), então aqui só tratamos o caso feliz +
+  // o aviso amigável de plano vazio (ver `DreEditavel`).
+  const gerarPlanoMut = trpc.orcamento.gerarPlanoIA.useMutation({
+    onSuccess: (data) => {
+      setPlanoIA(data);
+      if (data.linhas.length === 0) {
+        toast.error("Não consegui gerar o plano agora, tente de novo.");
+      } else {
+        toast.success("Plano da IA gerado. Confira as sugestões na tabela.");
+      }
+    },
+    onError: (e) => toast.error("Erro ao gerar o plano da IA: " + e.message),
   });
 
   const metasDiariasQ = trpc.orcamento.getMetasDiarias.useQuery(
@@ -250,6 +279,15 @@ export default function OrcamentoPage() {
     if (!orcamentoId) { toast.error("Salve o rascunho antes de registrar a decisão."); return; }
     if (decisao === "encerrar" && !window.confirm("Confirma a decisão de ENCERRAR esta loja? Essa é uma decisão séria.")) return;
     decisaoMut.mutate({ orcamentoId, decisao });
+  }
+
+  function handleGerarPlano() {
+    if (!storeId) { toast.error("Selecione uma loja."); return; }
+    if (!linhas || linhas.length === 0) { toast.error("Carregue a DRE antes de gerar o plano da IA."); return; }
+    const valor = parseFloat(metaValor.replace(",", "."));
+    if (isNaN(valor)) { toast.error("Informe o valor da meta."); return; }
+    setPlanoIA(null);
+    gerarPlanoMut.mutate({ storeId, linhas, anoMeses, meta: { tipo: metaTipo, valor } });
   }
 
   const carregandoProposta = proporMut.isPending || uploading;
@@ -369,7 +407,49 @@ export default function OrcamentoPage() {
         </div>
       )}
 
-      {/* Tabela dinâmica — espelha a árvore completa da DRE (Task L4) */}
+      {/* Proposto Inteligente: meta + "Gerar plano da IA" (Task P3) */}
+      <div className="section-card">
+        <h3 className="font-semibold text-sm mb-1 flex items-center gap-1.5" style={{ color: "var(--ink)" }}>
+          <Sparkles size={14} /> Proposto Inteligente
+        </h3>
+        <p className="text-xs mb-3" style={{ color: "var(--stone)" }}>
+          Defina a meta do mês e a IA monta um plano viável, linha a linha, ancorado no histórico — você continua podendo editar tudo.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <div className="text-xs font-medium mb-1" style={{ color: "var(--stone)" }}>Tipo de meta</div>
+            <Select value={metaTipo} onValueChange={(v) => setMetaTipo(v as typeof metaTipo)} disabled={!linhas}>
+              <SelectTrigger className="h-9 w-56 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ebitda_rs">EBITDA em R$</SelectItem>
+                <SelectItem value="ebitda_pct">EBITDA em % da receita</SelectItem>
+                <SelectItem value="melhoria_pct">Melhoria do EBITDA (%)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="text-xs font-medium mb-1" style={{ color: "var(--stone)" }}>
+              {metaTipo === "ebitda_rs" ? "Valor (R$)" : "Valor (%)"}
+            </div>
+            <Input
+              type="text"
+              inputMode="decimal"
+              placeholder={metaTipo === "ebitda_rs" ? "ex.: 100000" : "ex.: 15"}
+              value={metaValor}
+              onChange={(e) => setMetaValor(e.target.value)}
+              disabled={!linhas}
+              className="h-9 w-40 text-sm"
+            />
+          </div>
+          <Button onClick={handleGerarPlano} disabled={!linhas || gerarPlanoMut.isPending}>
+            {gerarPlanoMut.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
+            {gerarPlanoMut.isPending ? "A IA está montando o plano…" : "Gerar plano da IA"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Tabela dinâmica — espelha a árvore completa da DRE (Task L4) +
+          sugestões/plano da IA (Task P3) */}
       {linhas && resumo && (
         <DreEditavel
           linhas={linhas}
@@ -378,6 +458,7 @@ export default function OrcamentoPage() {
           diasNoMes={diasNoMes}
           onSalvar={handleSalvar}
           salvando={salvarLinhasMut.isPending}
+          planoIA={planoIA}
         />
       )}
 

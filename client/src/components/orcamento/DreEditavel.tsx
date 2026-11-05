@@ -34,13 +34,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LinhaProposta } from "../../../../server/orcamento-arvore";
 import type { ResumoOrcamento } from "../../../../server/orcamento-resumo";
+import type { PlanoIA } from "../../../../server/orcamento-plano-ia";
 import { distribuirProporcional } from "@shared/orcamento-distribuir";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
-import { Save, Loader2 } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Save, Loader2, Info, Sparkles, CheckCircle2, AlertTriangle, Target,
+} from "lucide-react";
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +72,11 @@ interface DreEditavelProps {
   diasNoMes: number;
   onSalvar: (linhas: LinhaParaSalvar[]) => void;
   salvando?: boolean;
+  /** Resultado de `orcamento.gerarPlanoIA` (Task P3, Proposto Inteligente) —
+   * `null`/`undefined` enquanto o gestor não gerou nenhum plano ainda.
+   * `linhas: []` (mas objeto não-nulo) = a IA falhou (fallback silencioso do
+   * servidor) — mostramos um aviso amigável e NÃO tocamos na tabela. */
+  planoIA?: PlanoIA | null;
 }
 
 // ─── Regex (mesmas de server/orcamento-resumo.ts — ver PONTO CRÍTICO no brief) ─
@@ -160,7 +169,7 @@ function ValorInput({
 
 // ─── Componente principal ────────────────────────────────────────────────────
 
-export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSalvar, salvando }: DreEditavelProps) {
+export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSalvar, salvando, planoIA }: DreEditavelProps) {
   // Só as linhas FOLHA (natureza !== "subtotal") têm estado editável próprio —
   // subtotais e derivadas são sempre recalculados ao vivo (nunca guardam
   // estado de edição direta).
@@ -319,6 +328,33 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
     });
   }
 
+  // ── Proposto Inteligente (Task P3): sugestões da IA por linha ─────────────
+  // `planoIA` vem SÓ depois que o gestor clica "Gerar plano da IA"
+  // (OrcamentoPage). `linhas: []` = fallback silencioso do servidor (a LLM
+  // falhou) — tratamos como "sem sugestões" aqui, e a página mostra o aviso.
+  const planoPorCodigo = useMemo(() => {
+    const m = new Map<string, PlanoIA["linhas"][number]>();
+    for (const l of planoIA?.linhas ?? []) m.set(l.codigo, l);
+    return m;
+  }, [planoIA]);
+  const temSugestoes = planoPorCodigo.size > 0;
+  const planoFalhou = planoIA != null && planoIA.linhas.length === 0;
+
+  /** Copia o `propostoIA` de cada linha sugerida pro "Seu valor" — o gestor
+   * continua podendo editar livremente depois (a IA sugere, o gestor
+   * decide). Linhas sem `propostoIA` (null — sem base no histórico) não são
+   * tocadas. */
+  function handleAplicarSugestoes() {
+    if (!planoIA) return;
+    setValores((prev) => {
+      const next = { ...prev };
+      for (const l of planoIA.linhas) {
+        if (l.propostoIA !== null) next[l.codigo] = l.propostoIA;
+      }
+      return next;
+    });
+  }
+
   function handleSalvarClick() {
     const paraSalvar: LinhaParaSalvar[] = linhas.map((l, i) => ({
       codigo: l.codigo,
@@ -351,9 +387,41 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
         />
       </div>
 
+      {/* Proposto Inteligente (Task P3): resumo da meta + aviso de falha ─── */}
+      {planoIA && temSugestoes && (
+        <div className={`banner-alert ${planoIA.meta.atingiuMeta ? "banner-green" : "banner-amber"} items-start flex-wrap`}>
+          {planoIA.meta.atingiuMeta ? <CheckCircle2 size={16} className="flex-shrink-0" /> : <AlertTriangle size={16} className="flex-shrink-0" />}
+          <div className="flex-1">
+            <div className="font-semibold">
+              Meta: {planoIA.meta.alvoRs !== null ? fmtBRL(planoIA.meta.alvoRs) : "—"} · Plano da IA alcança: {planoIA.meta.alcancadoRs !== null ? fmtBRL(planoIA.meta.alcancadoRs) : "—"}
+            </div>
+            {planoIA.meta.motivo && <div>{planoIA.meta.motivo}</div>}
+          </div>
+        </div>
+      )}
+      {planoFalhou && (
+        <div className="banner-alert banner-amber items-start flex-wrap">
+          <AlertTriangle size={16} className="flex-shrink-0" />
+          <div className="flex-1">
+            <div className="font-semibold">Não consegui gerar o plano agora</div>
+            <div>Tente de novo em alguns instantes — os valores da tabela continuam como estavam.</div>
+          </div>
+        </div>
+      )}
+
       {/* Tabela da DRE (árvore completa) — rola horizontal se ficar larga
-          (uma coluna por mês + Proposto + Seu valor + % receita). */}
+          (uma coluna por mês + Proposto + Sugestão IA + Seu valor + % receita). */}
       <div className="section-card p-0 overflow-hidden overflow-x-auto">
+        {temSugestoes && (
+          <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-2.5 border-b" style={{ borderColor: "var(--gray-line)" }}>
+            <span className="text-xs" style={{ color: "var(--stone)" }}>
+              A IA sugeriu valores para {planoIA!.linhas.filter((l) => l.propostoIA !== null).length} linha(s) — veja a coluna "Sugestão IA".
+            </span>
+            <Button size="sm" variant="outline" onClick={handleAplicarSugestoes}>
+              <Sparkles size={13} className="mr-1.5" /> Aplicar sugestões
+            </Button>
+          </div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -364,6 +432,7 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
                 </TableHead>
               ))}
               <TableHead className="text-right">Proposto</TableHead>
+              {temSugestoes && <TableHead className="text-right w-44">Sugestão IA</TableHead>}
               <TableHead className="text-right w-40">Seu valor</TableHead>
               <TableHead className="text-right w-20">% receita</TableHead>
             </TableRow>
@@ -396,6 +465,11 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
                   <TableCell className="text-right text-sm font-mono">
                     {fmtCell(l.proposto)}
                   </TableCell>
+                  {temSugestoes && (
+                    <TableCell className="text-right w-44">
+                      <SugestaoIACell linha={planoPorCodigo.get(l.codigo)} />
+                    </TableCell>
+                  )}
                   <TableCell className="text-right w-40">
                     {isGrupoEditavel ? (
                       <ValorInput
@@ -422,12 +496,102 @@ export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSal
         </Table>
       </div>
 
+      {/* Plano de batalha da IA (Task P3) — bloco separado, SÓ LEITURA por
+          ora (persistir/virar 4DX é módulo futuro). Mostra as ações que
+          sustentam a meta, não os valores de linha (isso já está na tabela). */}
+      {planoIA && planoIA.planoBatalha.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="font-semibold text-sm flex items-center gap-1.5" style={{ color: "var(--ink)" }}>
+            <Target size={14} /> Plano de batalha da IA
+          </h3>
+          <div className="space-y-2">
+            {planoIA.planoBatalha.map((acao, i) => (
+              <PlanoBatalhaCard key={i} acao={acao} linhas={linhas} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-end">
         <Button onClick={handleSalvarClick} disabled={!!salvando}>
           {salvando ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Save size={14} className="mr-2" />}
           Salvar rascunho
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ─── Proposto Inteligente (Task P3): célula de sugestão da IA ──────────────
+
+/** Mostra o `propostoIA` + ícone de info (abre o `porque`) + badge de
+ * confiança (alta=verde, média=âmbar, baixa=vermelho). Sem sugestão para
+ * essa linha (não veio no `plano.linhas`, ou `propostoIA` é `null` por falta
+ * de base no histórico) → célula em branco ("—"), nunca inventa um número. */
+function SugestaoIACell({ linha }: { linha: PlanoIA["linhas"][number] | undefined }) {
+  if (!linha || linha.propostoIA === null) {
+    return <span className="text-sm text-muted-foreground">—</span>;
+  }
+  const badgeCls =
+    linha.confianca === "alta" ? "badge-green" : linha.confianca === "media" ? "badge-amber" : "badge-red";
+  const confiancaLabel =
+    linha.confianca === "alta" ? "Confiança alta" : linha.confianca === "media" ? "Confiança média" : "Confiança baixa";
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      <span className={`badge-base ${badgeCls}`} style={{ fontSize: 10, padding: "1px 7px" }}>
+        {confiancaLabel.replace("Confiança ", "")}
+      </span>
+      <span className="text-sm font-mono">{fmtCell(linha.propostoIA)}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={confiancaLabel + ": " + linha.porque}>
+            <Info size={13} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-left">{linha.porque}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+// ─── Proposto Inteligente (Task P3): card do plano de batalha ──────────────
+
+function PlanoBatalhaCard({ acao, linhas }: { acao: PlanoIA["planoBatalha"][number]; linhas: LinhaProposta[] }) {
+  const prioridadeCls =
+    acao.prioridade === "alta" ? "badge-red" : acao.prioridade === "media" ? "badge-amber" : "badge-green";
+  const prioridadeLabel =
+    acao.prioridade === "alta" ? "Prioridade alta" : acao.prioridade === "media" ? "Prioridade média" : "Prioridade baixa";
+  const borderColor =
+    acao.prioridade === "alta" ? "var(--red)" : acao.prioridade === "media" ? "var(--amber)" : "var(--green)";
+
+  return (
+    <div className="action-card" style={{ borderLeftColor: borderColor }}>
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <span className={`badge-base ${prioridadeCls}`}>{prioridadeLabel}</span>
+        {acao.impactoEstimadoRs !== null && (
+          <span className="text-xs font-mono" style={{ color: "var(--stone)" }}>
+            Impacto estimado: {fmtBRL(acao.impactoEstimadoRs)}
+          </span>
+        )}
+      </div>
+      <div className="font-medium text-sm" style={{ color: "var(--ink)" }}>{acao.titulo}</div>
+      <div className="text-xs mt-1" style={{ color: "var(--stone-light)" }}>{acao.descricao}</div>
+      {acao.linhasAfetadas.length > 0 && (
+        <div className="flex gap-1 mt-2 flex-wrap">
+          {acao.linhasAfetadas.map((codigo) => {
+            const label = linhas.find((l) => l.codigo === codigo)?.label ?? codigo;
+            return (
+              <span
+                key={codigo}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(113,14,43,0.08)", color: "var(--vinho)" }}
+              >
+                {label}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
