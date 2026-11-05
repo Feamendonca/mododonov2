@@ -128,6 +128,16 @@ export interface LinhaProposta {
   natureza: "receita" | "custo" | "subtotal";
   histMedia: number | null;
   proposto: number | null;
+  /** Valor de cada mês, na MESMA ordem/tamanho de `anoMeses` devolvido junto
+   * (ver `proporLinhas`). Mês sem base no histórico → `null` (NUNCA chuta). */
+  porMes: (number | null)[];
+}
+
+export interface ProporLinhasResult {
+  linhas: LinhaProposta[];
+  /** Rótulos dos meses lidos ("YYYY-MM"), na mesma ordem cronológica de
+   * `meses` (entrada) — alinhados 1:1 com `porMes` de cada linha. */
+  anoMeses: string[];
 }
 
 function media(valores: number[]): number | null {
@@ -140,6 +150,8 @@ function media(valores: number[]): number | null {
  * cada código, varrendo os meses na ordem em que chegam). Para cada código:
  *   - `histMedia`/`proposto` = média dos valores NÃO-NULOS entre os meses.
  *     Nenhum mês com valor → `null` (NUNCA chuta).
+ *   - `porMes` = valor de CADA mês (alinhado a `anoMeses`, devolvido junto),
+ *     mesmo quando `null` (mês sem base) — NUNCA preenche com a média.
  *   - `derivada` = label casa a mesma regex de linha DERIVADA usada em
  *     extrairGruposPorMes (Receita Líquida, Margem Bruta, Resultado, Lucro,
  *     EBITDA).
@@ -150,30 +162,35 @@ function media(valores: number[]): number | null {
  *     subtotal, nunca folha); senão `receita` se o label casa /receita/i E
  *     `histMedia` não é null e ≥ 0; senão `custo`.
  */
-export function proporLinhas(meses: MesArvore[]): LinhaProposta[] {
+export function proporLinhas(meses: MesArvore[]): ProporLinhasResult {
+  const anoMeses = meses.map((m) => m.anoMes);
   const ordem: string[] = [];
   const infoPorCodigo: Record<string, { label: string; nivel: 1 | 2 }> = {};
   const valoresPorCodigo: Record<string, number[]> = {};
+  const porMesPorCodigo: Record<string, (number | null)[]> = {};
 
-  for (const mes of meses) {
+  meses.forEach((mes, mesIdx) => {
     for (const linha of mes.linhas) {
       if (!(linha.codigo in infoPorCodigo)) {
         infoPorCodigo[linha.codigo] = { label: linha.label, nivel: linha.nivel };
         valoresPorCodigo[linha.codigo] = [];
+        porMesPorCodigo[linha.codigo] = new Array(meses.length).fill(null);
         ordem.push(linha.codigo);
       }
       if (linha.valor !== null) valoresPorCodigo[linha.codigo].push(linha.valor);
+      porMesPorCodigo[linha.codigo][mesIdx] = linha.valor;
     }
-  }
+  });
 
   const codigosNivel2 = ordem.filter((c) => infoPorCodigo[c].nivel === 2);
 
-  return ordem.map((codigo) => {
+  const linhas = ordem.map((codigo) => {
     const { label, nivel } = infoPorCodigo[codigo];
     const derivada = REGEX_DERIVADA.test(label);
     const temFilhos = codigosNivel2.some((c2) => c2.startsWith(`${codigo}.`));
     const histMedia = media(valoresPorCodigo[codigo]);
     const proposto = histMedia;
+    const porMes = porMesPorCodigo[codigo];
 
     let natureza: "receita" | "custo" | "subtotal";
     if (derivada || temFilhos) {
@@ -184,6 +201,8 @@ export function proporLinhas(meses: MesArvore[]): LinhaProposta[] {
       natureza = "custo";
     }
 
-    return { codigo, label, nivel, derivada, temFilhos, natureza, histMedia, proposto };
+    return { codigo, label, nivel, derivada, temFilhos, natureza, histMedia, proposto, porMes };
   });
+
+  return { linhas, anoMeses };
 }

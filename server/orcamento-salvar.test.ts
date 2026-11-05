@@ -237,6 +237,7 @@ describe("orcamento.proporDaDre", () => {
   const rascunhoFake = { receitaBruta: 700000, cmvPct: 0.31, emAtencao: false } as any;
   const dreFake = { receitaLiquida: 700000, cmvRs: 217000, ebitda: 100000, ebitdaPct: 0.14, pontoEquilibrio: 500000, metaDiaria: 23333, parcial: false };
   const linhasFake = [{ codigo: "1", label: "Receita Bruta", nivel: 1 }] as any;
+  const anoMesesFake = ["2026-09"];
   const resumoFake = { receitaBruta: 700000, ebitda: 100000, ebitdaPct: 0.14, metaDiaria: 23333, pontoEquilibrio: 500000, parcial: false };
 
   beforeEach(() => {
@@ -245,7 +246,7 @@ describe("orcamento.proporDaDre", () => {
     (proporOrcamento as any).mockReturnValue(rascunhoFake);
     (calcularDre as any).mockReturnValue(dreFake);
     (extrairArvoreDre as any).mockReturnValue([{ anoMes: "2026-09", linhas: [] }]);
-    (proporLinhas as any).mockReturnValue(linhasFake);
+    (proporLinhas as any).mockReturnValue({ linhas: linhasFake, anoMeses: anoMesesFake });
     (calcularResumoLinhas as any).mockReturnValue(resumoFake);
   });
 
@@ -267,7 +268,7 @@ describe("orcamento.proporDaDre", () => {
       meses: 3,
     });
 
-    expect(result).toEqual({ rascunho: rascunhoFake, dre: dreFake, linhas: linhasFake, resumo: resumoFake });
+    expect(result).toEqual({ rascunho: rascunhoFake, dre: dreFake, linhas: linhasFake, resumo: resumoFake, anoMeses: anoMesesFake });
     expect(storageDownload).toHaveBeenCalledWith("uploads/dre.xlsx");
     expect(extrairGruposPorMes).toHaveBeenCalledWith(
       expect.any(Buffer),
@@ -288,7 +289,7 @@ describe("orcamento.proporDaDre", () => {
   it("admin passa para qualquer loja", async () => {
     const caller = orcamentoRouter.createCaller(ctxAdmin);
     const result = await caller.proporDaDre({ storeId: 999, storageKey: "k", fileName: "dre.xlsx" });
-    expect(result).toEqual({ rascunho: rascunhoFake, dre: dreFake, linhas: linhasFake, resumo: resumoFake });
+    expect(result).toEqual({ rascunho: rascunhoFake, dre: dreFake, linhas: linhasFake, resumo: resumoFake, anoMeses: anoMesesFake });
     expect(getStoresByUserId).not.toHaveBeenCalled();
   });
 });

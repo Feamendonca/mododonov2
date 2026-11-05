@@ -55,6 +55,10 @@ export interface LinhaParaSalvar {
 
 interface DreEditavelProps {
   linhas: LinhaProposta[];
+  /** Rótulos dos meses lidos da DRE ("YYYY-MM"), alinhados 1:1 com o
+   * `porMes` de cada linha — vem do endpoint (propor/puxar). Mostrados como
+   * colunas somente-leitura ANTES do "Proposto" (Task "3 meses"). */
+  anoMeses: string[];
   /** Resumo devolvido pelo endpoint (propor/puxar), com os valores PROPOSTOS
    * (histórico) — serve de fallback quando a árvore não tem uma linha
    * derivada/de receita bruta identificável. */
@@ -84,6 +88,19 @@ function fmtCell(v: number | null | undefined): string {
 function fmtPct(v: number | null): string {
   if (v === null) return "—";
   return `${(v * 100).toFixed(1)}%`;
+}
+
+const MESES_ABREV = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+/** "2026-07" → "Jul/26" (cabeçalho amigável da coluna do mês). Formato
+ * inesperado → devolve a string original (nunca quebra a tela). */
+function fmtAnoMes(anoMes: string): string {
+  const m = anoMes.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return anoMes;
+  const ano = m[1].slice(2);
+  const mesIdx = Number(m[2]) - 1;
+  if (mesIdx < 0 || mesIdx > 11) return anoMes;
+  return `${MESES_ABREV[mesIdx]}/${ano}`;
 }
 
 // ─── KPI card (resumo vivo) ──────────────────────────────────────────────────
@@ -143,7 +160,7 @@ function ValorInput({
 
 // ─── Componente principal ────────────────────────────────────────────────────
 
-export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salvando }: DreEditavelProps) {
+export default function DreEditavel({ linhas, anoMeses, resumo, diasNoMes, onSalvar, salvando }: DreEditavelProps) {
   // Só as linhas FOLHA (natureza !== "subtotal") têm estado editável próprio —
   // subtotais e derivadas são sempre recalculados ao vivo (nunca guardam
   // estado de edição direta).
@@ -334,13 +351,18 @@ export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salva
         />
       </div>
 
-      {/* Tabela da DRE (árvore completa) */}
-      <div className="section-card p-0 overflow-hidden">
+      {/* Tabela da DRE (árvore completa) — rola horizontal se ficar larga
+          (uma coluna por mês + Proposto + Seu valor + % receita). */}
+      <div className="section-card p-0 overflow-hidden overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Linha</TableHead>
-              <TableHead className="text-right">Histórico (média lida)</TableHead>
+              {anoMeses.map((am) => (
+                <TableHead key={am} className="text-right text-muted-foreground">
+                  {fmtAnoMes(am)}
+                </TableHead>
+              ))}
               <TableHead className="text-right">Proposto</TableHead>
               <TableHead className="text-right w-40">Seu valor</TableHead>
               <TableHead className="text-right w-20">% receita</TableHead>
@@ -366,9 +388,11 @@ export default function DreEditavel({ linhas, resumo, diasNoMes, onSalvar, salva
                   >
                     {l.label}
                   </TableCell>
-                  <TableCell className="text-right text-sm font-mono text-muted-foreground">
-                    {fmtCell(l.histMedia)}
-                  </TableCell>
+                  {anoMeses.map((am, i) => (
+                    <TableCell key={am} className="text-right text-sm font-mono text-muted-foreground">
+                      {fmtCell(l.porMes[i])}
+                    </TableCell>
+                  ))}
                   <TableCell className="text-right text-sm font-mono">
                     {fmtCell(l.proposto)}
                   </TableCell>

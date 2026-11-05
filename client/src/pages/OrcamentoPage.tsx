@@ -108,6 +108,7 @@ export default function OrcamentoPage() {
   // "loja em atenção"/decisão — a tabela usa `linhas`/`resumo` (Task L1/L3).
   const [rascunho, setRascunho] = useState<RascunhoOrcamento | null>(null);
   const [linhas, setLinhas] = useState<LinhaProposta[] | null>(null);
+  const [anoMeses, setAnoMeses] = useState<string[]>([]);
   const [resumo, setResumo] = useState<ResumoOrcamento | null>(null);
   const [orcamentoId, setOrcamentoId] = useState<number | null>(null);
   const [aprovado, setAprovado] = useState(false);
@@ -116,6 +117,7 @@ export default function OrcamentoPage() {
   function resetRascunho() {
     setRascunho(null);
     setLinhas(null);
+    setAnoMeses([]);
     setResumo(null);
     setOrcamentoId(null);
     setAprovado(false);
@@ -137,6 +139,7 @@ export default function OrcamentoPage() {
     onSuccess: (data) => {
       setRascunho(data.rascunho);
       setLinhas(data.linhas);
+      setAnoMeses(data.anoMeses);
       setResumo(data.resumo);
       setOrcamentoId(null);
       setAprovado(false);
@@ -150,6 +153,7 @@ export default function OrcamentoPage() {
     onSuccess: (data) => {
       setRascunho(data.rascunho);
       setLinhas(data.linhas);
+      setAnoMeses(data.anoMeses);
       setResumo(data.resumo);
       setOrcamentoId(null);
       setAprovado(false);
@@ -369,6 +373,7 @@ export default function OrcamentoPage() {
       {linhas && resumo && (
         <DreEditavel
           linhas={linhas}
+          anoMeses={anoMeses}
           resumo={resumo}
           diasNoMes={diasNoMes}
           onSalvar={handleSalvar}

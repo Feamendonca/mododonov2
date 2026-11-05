@@ -286,10 +286,10 @@ export const orcamentoRouter = router({
       // resumo (EBITDA das FOLHAS, Task L3) — mesmo buffer, mesmo arquivo.
       // NÃO grava nada (igual ao resto deste fluxo).
       const mesesArvore = extrairArvoreDre(buf, input.fileName, undefined, input.meses);
-      const linhas = proporLinhas(mesesArvore);
+      const { linhas, anoMeses } = proporLinhas(mesesArvore);
       const resumo = calcularResumoLinhas(linhas, DIAS_OPERACAO_PREVIEW);
 
-      return { rascunho, dre, linhas, resumo };
+      return { rascunho, dre, linhas, resumo, anoMeses };
     }),
 
   // ── Importação direto do SharePoint (Task S3) ───────────────────────────
@@ -346,7 +346,7 @@ export const orcamentoRouter = router({
       // Task L3 (orçamento linha a linha): mesma ideia de `proporDaDre` —
       // devolve a árvore completa + resumo das folhas. NÃO grava nada.
       const mesesArvore = extrairArvoreDre(buf, alvo.name, undefined, input.meses ?? 3);
-      const linhas = proporLinhas(mesesArvore);
+      const { linhas, anoMeses } = proporLinhas(mesesArvore);
       const resumo = calcularResumoLinhas(linhas, DIAS_OPERACAO_PREVIEW);
 
       return {
@@ -354,6 +354,7 @@ export const orcamentoRouter = router({
         dre,
         linhas,
         resumo,
+        anoMeses,
         fonte: { nome: alvo.name, data: alvo.lastModifiedDateTime },
       };
     }),
