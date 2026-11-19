@@ -2,6 +2,7 @@ import {
   bigint,
   boolean,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -933,3 +934,73 @@ export const orcamentoLinhas = pgTable("orcamento_linhas", {
   uqOrcLinha: uniqueIndex("uq_orc_linha").on(t.orcamentoId, t.codigo),
 }));
 export type OrcamentoLinhaRow = typeof orcamentoLinhas.$inferSelect;
+
+// ─── Escala — Funções da Loja — migration 0032 ────────────────────────────────
+export const funcoesLojaDriverEnum = pgEnum("funcoes_loja_driver", ["tickets", "pratos", "cobertos"]);
+export const funcoesLojaProdutividadeOrigemEnum = pgEnum("funcoes_loja_produtividade_origem", [
+  "sugerida_historico",
+  "sugerida_benchmark",
+  "definida_gestor",
+]);
+
+export const funcoesLoja = pgTable("funcoes_loja", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  nome: varchar("nome", { length: 64 }).notNull(),
+  driver: funcoesLojaDriverEnum("driver").notNull(),
+  produtividadeAlvo: numeric("produtividadeAlvo", { precision: 10, scale: 2 }),
+  produtividadeOrigem: funcoesLojaProdutividadeOrigemEnum("produtividadeOrigem"),
+  minPorBloco: integer("minPorBloco").notNull().default(0),
+  maxPorBloco: integer("maxPorBloco"),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
+}, (t) => ({
+  idxFuncoesLojaStoreAtivo: index("idx_funcoes_loja_store_ativo").on(t.storeId, t.ativo),
+}));
+export type FuncaoLojaRow = typeof funcoesLoja.$inferSelect;
+export type InsertFuncaoLoja = typeof funcoesLoja.$inferInsert;
+
+// ─── Escala — Catálogo Legal (EC 141/2026) — migration 0032 ──────────────────
+// Toda regra legal é parâmetro com data de vigência, nunca constante no código.
+// Ver docs/superpowers/specs/2026-11-19-gestor-de-escala-design.md, seções 1 e 2.
+export const escalasCatalogo = pgTable("escalas_catalogo", {
+  id: serial("id").primaryKey(),
+  codigo: varchar("codigo", { length: 32 }).notNull(),
+  nome: varchar("nome", { length: 128 }).notNull(),
+  diasTrabalho: integer("diasTrabalho").notNull(),
+  diasFolga: integer("diasFolga").notNull(),
+  horasDiaPadrao: numeric("horasDiaPadrao", { precision: 5, scale: 2 }).notNull(),
+  horasSemanaMedia: numeric("horasSemanaMedia", { precision: 5, scale: 2 }).notNull(),
+  vigenciaInicio: date("vigenciaInicio"),
+  vigenciaFim: date("vigenciaFim"),
+  exigeAcordoIndividual: boolean("exigeAcordoIndividual").notNull().default(false),
+  exigeCCT: boolean("exigeCCT").notNull().default(false),
+  observacaoLegal: text("observacaoLegal"),
+});
+export type EscalaCatalogoRow = typeof escalasCatalogo.$inferSelect;
+export type InsertEscalaCatalogo = typeof escalasCatalogo.$inferInsert;
+
+// ─── Escala — Regras (travas e preferências, por rede/praça/loja) — migration 0032
+export const regrasEscalaTipoEnum = pgEnum("regras_escala_tipo", ["DURA", "MOLE", "DEPENDE_CCT"]);
+
+export const regrasEscala = pgTable("regras_escala", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId"),
+  uf: varchar("uf", { length: 2 }),
+  cct: varchar("cct", { length: 120 }),
+  chave: varchar("chave", { length: 64 }).notNull(),
+  valor: jsonb("valor").notNull(),
+  tipo: regrasEscalaTipoEnum("tipo").notNull(),
+  vigenciaInicio: date("vigenciaInicio"),
+  vigenciaFim: date("vigenciaFim"),
+  fonte: text("fonte").notNull(),
+}, (t) => ({
+  idxRegrasEscalaStoreChaveVigencia: index("idx_regras_escala_store_chave_vigencia").on(
+    t.storeId,
+    t.chave,
+    t.vigenciaInicio,
+  ),
+}));
+export type RegraEscalaRow = typeof regrasEscala.$inferSelect;
+export type InsertRegraEscala = typeof regrasEscala.$inferInsert;
