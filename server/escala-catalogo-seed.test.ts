@@ -20,9 +20,10 @@ describe("CATALOGO_INICIAL", () => {
 });
 
 describe("REGRAS_LEGAIS_INICIAIS", () => {
-  it("jornada semanal cai para 40h em 16/12/2027", () => {
+  it("jornada semanal: 44h até 15/12/2026, 42h a partir de 16/12/2026, 40h a partir de 16/12/2027", () => {
     const r = REGRAS_LEGAIS_INICIAIS.filter((r) => r.chave === "jornada_max_semanal");
     expect(r.map((x) => [x.vigenciaInicio, x.valor])).toEqual([
+      [null, 44],
       ["2026-12-16", 42],
       ["2027-12-16", 40],
     ]);
