@@ -309,6 +309,28 @@ describe("escala.salvarFuncao — validação de entrada", () => {
       caller.salvarFuncao({ storeId: 1, nome: "Atendente", driver: driver as any, minPorBloco: 1 })
     ).resolves.toBeDefined();
   });
+
+  // M3 (pós-revisão da Task 5): a TELA (client/src/lib/escala-config-ui.ts)
+  // já rejeitava nome só de espaços, mas o servidor (sem `.trim()`)
+  // aceitava — tela mais restritiva que o servidor, ao contrário da
+  // premissa (tela espelha o servidor, nunca o oposto). Corrigido
+  // apertando o servidor com `.trim()` em vez de afrouxar a tela: nome só
+  // de espaços é lixo nos dois lados.
+  it("rejeita nome só com espaços — M3: servidor aperta com .trim() para não ficar mais permissivo que a tela", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(
+      caller.salvarFuncao({ storeId: 1, nome: "   ", driver: "tickets", minPorBloco: 1 })
+    ).rejects.toThrow();
+    expect(dbEscalaConfig.createFuncao).not.toHaveBeenCalled();
+  });
+
+  it("aceita nome com espaços nas pontas e grava já sem eles (.trim() roda antes de min(1)/max(64))", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(
+      caller.salvarFuncao({ storeId: 1, nome: "  Atendente  ", driver: "tickets", minPorBloco: 1 })
+    ).resolves.toBeDefined();
+    expect(dbEscalaConfig.createFuncao).toHaveBeenCalledWith(1, expect.objectContaining({ nome: "Atendente" }));
+  });
 });
 
 // ─── I7: produtividadeAlvo > 0 e maxPorBloco >= minPorBloco ──────────────────

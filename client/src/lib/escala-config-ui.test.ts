@@ -15,6 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  deveExibirAvisoProdutividadeIndisponivel,
   mensagemProdutividadeIndisponivel,
   rotuloOrigemProdutividade,
   validarFuncao,
@@ -63,6 +64,11 @@ describe("validarFuncao — espelha a validação do servidor (conveniência de 
     expect(erros.length).toBeGreaterThan(0);
   });
 
+  it("bloqueia produtividadeAlvo = NaN (M4: comparação `NaN <= 0` é sempre falsa — passava sem checagem explícita)", () => {
+    const erros = validarFuncao(entradaValida({ produtividadeAlvo: NaN }));
+    expect(erros.length).toBeGreaterThan(0);
+  });
+
   it("aceita produtividadeAlvo nula (ainda não definida pelo gestor)", () => {
     expect(validarFuncao(entradaValida({ produtividadeAlvo: null }))).toEqual([]);
   });
@@ -79,6 +85,11 @@ describe("validarFuncao — espelha a validação do servidor (conveniência de 
 
   it("aceita maxPorBloco nulo (sem teto)", () => {
     expect(validarFuncao(entradaValida({ maxPorBloco: null }))).toEqual([]);
+  });
+
+  it("bloqueia maxPorBloco fracionário, mesmo quando >= minPorBloco (I2: servidor exige z.number().int(), a tela só checava < minPorBloco — 2.5 passava)", () => {
+    const erros = validarFuncao(entradaValida({ minPorBloco: 1, maxPorBloco: 2.5 }));
+    expect(erros.length).toBeGreaterThan(0);
   });
 
   it("bloqueia driver fora de tickets|pratos|cobertos", () => {
@@ -182,5 +193,62 @@ describe("mensagemProdutividadeIndisponivel — motivo + pedido do número", () 
     const msg = mensagemProdutividadeIndisponivel(undefined);
     expect(msg.length).toBeGreaterThan(0);
     expect(msg.toLowerCase()).toMatch(/informe|digite|preencha/);
+  });
+});
+
+describe("deveExibirAvisoProdutividadeIndisponivel — I1: não pode contradizer um valor já definido", () => {
+  it("mostra o aviso quando não há sugestão e o campo está vazio (loja nova, sem histórico — o caso que o aviso existe para cobrir)", () => {
+    expect(
+      deveExibirAvisoProdutividadeIndisponivel({
+        carregandoSugestao: false,
+        valorSugerido: null,
+        produtividadeTocada: false,
+        produtividadeAtual: "",
+      }),
+    ).toBe(true);
+  });
+
+  it("NÃO mostra o aviso enquanto a sugestão ainda está carregando", () => {
+    expect(
+      deveExibirAvisoProdutividadeIndisponivel({
+        carregandoSugestao: true,
+        valorSugerido: null,
+        produtividadeTocada: false,
+        produtividadeAtual: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("NÃO mostra o aviso quando o gestor já tocou o campo manualmente — não pode dizer 'indisponível, informe o número' e 'definida por você' ao mesmo tempo", () => {
+    expect(
+      deveExibirAvisoProdutividadeIndisponivel({
+        carregandoSugestao: false,
+        valorSugerido: null,
+        produtividadeTocada: true,
+        produtividadeAtual: "12",
+      }),
+    ).toBe(false);
+  });
+
+  it("NÃO mostra o aviso quando já existe um valor no campo, mesmo sem ter sido 'tocado' nesta sessão (ex.: reabrindo função já salva com valor antes de a sugestão nova chegar)", () => {
+    expect(
+      deveExibirAvisoProdutividadeIndisponivel({
+        carregandoSugestao: false,
+        valorSugerido: null,
+        produtividadeTocada: false,
+        produtividadeAtual: "8",
+      }),
+    ).toBe(false);
+  });
+
+  it("NÃO mostra o aviso quando a sugestão existe (valorSugerido não é null)", () => {
+    expect(
+      deveExibirAvisoProdutividadeIndisponivel({
+        carregandoSugestao: false,
+        valorSugerido: 15,
+        produtividadeTocada: false,
+        produtividadeAtual: "15",
+      }),
+    ).toBe(false);
   });
 });

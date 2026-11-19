@@ -59,6 +59,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Edit2, Ban } from "lucide-react";
 import {
+  deveExibirAvisoProdutividadeIndisponivel,
   mensagemProdutividadeIndisponivel,
   rotuloOrigemProdutividade,
   validarFuncao,
@@ -207,7 +208,17 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
     });
   }
 
-  const sugestaoIndisponivel = !sugestaoQuery.isLoading && (sugestaoQuery.data?.valor ?? null) == null;
+  // I1 (pós-revisão): a lógica de quando mostrar o aviso vive em
+  // `escala-config-ui.ts` (testada no módulo puro) — antes considerava só
+  // `sugestaoQuery.data`, e podia mostrar "indisponível, informe o
+  // número" ao MESMO TEMPO que "Origem: definida por você", quando o
+  // campo já tinha um valor. Ver `deveExibirAvisoProdutividadeIndisponivel`.
+  const sugestaoIndisponivel = deveExibirAvisoProdutividadeIndisponivel({
+    carregandoSugestao: sugestaoQuery.isLoading,
+    valorSugerido: sugestaoQuery.data?.valor,
+    produtividadeTocada,
+    produtividadeAtual: form.produtividadeAlvo,
+  });
 
   return (
     <div className="space-y-4">

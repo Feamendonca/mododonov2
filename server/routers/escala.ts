@@ -61,7 +61,14 @@ export const escalaRouter = router({
         .object({
           storeId: z.number(),
           id: z.number().optional(),
-          nome: z.string().min(1).max(64),
+          // M3 (pós-revisão da Task 5): sem `.trim()`, `"   "` (só espaços)
+          // passava aqui (min(1) conta os espaços) e a TELA rejeitava —
+          // mais restritiva que o servidor, ao contrário da premissa
+          // (tela espelha o servidor, nunca o contrário). Corrigido
+          // apertando o servidor: nome só de espaços é lixo nos dois
+          // lados, e `.trim()` roda antes de `.min(1)` — "   " trimado
+          // vira "" e cai no mesmo erro de nome vazio.
+          nome: z.string().trim().min(1).max(64),
           driver: driverSchema,
           // I7 do fix loop da Task 4: 0 PASSAVA antes (`.min(0)`), e o
           // dimensionamento faz `demanda ÷ produtividade` — 0 vira

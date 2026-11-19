@@ -54,7 +54,11 @@ export function validarFuncao(entrada: EntradaValidarFuncao): string[] {
 
   // I7 do fix loop da Task 4: 0 passava antes (`.min(0)`), e o
   // dimensionamento faz `demanda ÷ produtividade` — 0 vira `Infinity`.
-  if (entrada.produtividadeAlvo != null && entrada.produtividadeAlvo <= 0) {
+  // M4 (pós-revisão): `NaN <= 0` é sempre `false` — `NaN` passava direto
+  // sem cair em nenhuma das duas checagens. `!Number.isFinite` captura
+  // `NaN` e `Infinity` dos dois lados, mesmo padrão de defesa que
+  // `!Number.isInteger` já usa para `minPorBloco` abaixo.
+  if (entrada.produtividadeAlvo != null && (!Number.isFinite(entrada.produtividadeAlvo) || entrada.produtividadeAlvo <= 0)) {
     erros.push("A produtividade alvo deve ser maior que zero.");
   }
 
@@ -65,8 +69,16 @@ export function validarFuncao(entrada: EntradaValidarFuncao): string[] {
   // I7: min=5/max=2 era aceito antes e virava restrição insatisfazível em
   // silêncio (nenhum número de pessoas por bloco atende as duas travas ao
   // mesmo tempo).
-  if (entrada.maxPorBloco != null && entrada.maxPorBloco < entrada.minPorBloco) {
-    erros.push("O máximo de pessoas por bloco não pode ser menor que o mínimo.");
+  // I2 (pós-revisão): o servidor exige `z.number().int()` em `maxPorBloco`
+  // — a tela só checava `< minPorBloco`, então `maxPorBloco = 2.5` com
+  // `minPorBloco = 1` passava na tela e quebrava no servidor (o gerente
+  // preenche, clica, e toma um erro que a tela devia ter pego antes).
+  if (entrada.maxPorBloco != null) {
+    if (!Number.isInteger(entrada.maxPorBloco)) {
+      erros.push("O máximo de pessoas por bloco deve ser um número inteiro.");
+    } else if (entrada.maxPorBloco < entrada.minPorBloco) {
+      erros.push("O máximo de pessoas por bloco não pode ser menor que o mínimo.");
+    }
   }
 
   return erros;
@@ -135,4 +147,36 @@ export function rotuloOrigemProdutividade(origem: ProdutividadeOrigem | null, dr
 export function mensagemProdutividadeIndisponivel(motivo: string | undefined): string {
   const base = motivo && motivo.trim().length > 0 ? motivo : "Ainda não há sugestão de produtividade para esta função.";
   return `${base} Informe quantos atendimentos por hora uma pessoa entrega nesta função.`;
+}
+
+export interface ParametrosAvisoProdutividadeIndisponivel {
+  /** `sugestaoQuery.isLoading` — enquanto carrega, não há veredito ainda. */
+  carregandoSugestao: boolean;
+  /** `sugestaoQuery.data?.valor` — `null`/`undefined` quando o servidor não tem base suficiente. */
+  valorSugerido: number | null | undefined;
+  /** O gestor já digitou um valor manualmente nesta sessão de edição. */
+  produtividadeTocada: boolean;
+  /** Valor atual do campo (string do input) — pode já ter um valor salvo antes, mesmo sem ter sido "tocado" agora. */
+  produtividadeAtual: string;
+}
+
+/**
+ * I1 (pós-revisão): decide se o aviso âmbar "sugestão indisponível, informe
+ * o número" deve aparecer. Antes, esse cálculo olhava só para
+ * `sugestaoQuery.data` — então numa loja nova, sem histórico, o aviso
+ * aparecia AO MESMO TEMPO que "Origem: definida por você" (quando o
+ * campo já tinha um valor, tocado ou pré-existente), contradizendo a tela
+ * na cara do gerente: "já está definido" e "ainda falta definir"
+ * simultaneamente. O aviso só faz sentido quando NÃO há sugestão E o
+ * campo está genuinamente vazio — se já existe um valor (o gestor digitou
+ * agora, ou a função já tinha um valor salvo antes), não há nada
+ * "indisponível" para avisar.
+ */
+export function deveExibirAvisoProdutividadeIndisponivel(
+  params: ParametrosAvisoProdutividadeIndisponivel,
+): boolean {
+  if (params.carregandoSugestao) return false;
+  if (params.produtividadeTocada) return false;
+  if (params.produtividadeAtual !== "") return false;
+  return (params.valorSugerido ?? null) == null;
 }
