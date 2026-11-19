@@ -33,6 +33,15 @@
  *   pede o número ao gestor.
  * - Qualquer edição manual do campo marca a origem como "definida por
  *   você" — o gestor sempre pode sobrescrever.
+ * - 🔴 R32 (CC1 da review final): a sugestão NUNCA substitui uma
+ *   produtividade já salva. Enquanto o campo está vazio (ou a função é
+ *   nova), a sugestão preenche — isso é propor. Se já existe valor salvo e
+ *   a sugestão é diferente, a tela mostra os DOIS e o gestor escolhe. A
+ *   decisão é função pura testada (`decidirAplicacaoSugestao` /
+ *   `devePermitirSobrescritaAutomatica`, em `escala-config-ui.ts`), não um
+ *   `useEffect` decidindo sozinho: "a IA propõe, o humano confirma, a IA
+ *   nunca grava sozinha" é o princípio-âncora do app, e era exatamente ele
+ *   que esta tela estava violando.
  * - R22 (pós-revisão): o rótulo de origem (`rotuloOrigemProdutividade`,
  *   em `escala-config-ui.ts`) agora recebe o `driver` e embute uma
  *   ressalva quando a sugestão NÃO é específica da função — hoje o único
@@ -59,8 +68,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Edit2, Ban } from "lucide-react";
 import {
+  decidirAplicacaoSugestao,
   deveExibirAvisoProdutividadeIndisponivel,
+  formatarProdutividade,
   mensagemProdutividadeIndisponivel,
+  origemParaSalvar,
+  produtividadeParaInput,
   rotuloOrigemProdutividade,
   validarFuncao,
   type DriverFuncao,
@@ -110,6 +123,14 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
   // Impede que a sugestão automática sobrescreva um valor que o próprio
   // gestor já digitou/confirmou nesta sessão de edição.
   const [produtividadeTocada, setProdutividadeTocada] = useState(false);
+  // 🔴 R32 (CC1): origem da produtividade COMO ESTÁ NO BANCO para a função
+  // em edição (`null` em função nova). É ela — não a origem do formulário,
+  // que muda enquanto o gestor mexe — que decide se a sugestão pode
+  // preencher o campo sozinha. Ver `devePermitirSobrescritaAutomatica`.
+  const [origemSalva, setOrigemSalva] = useState<ProdutividadeOrigem | null>(null);
+  // O gestor já resolveu a divergência "valor salvo × sugestão nova" nesta
+  // sessão (escolheu um dos dois) — não perguntar de novo.
+  const [sugestaoDecidida, setSugestaoDecidida] = useState(false);
 
   // R20: busca a sugestão assim que o diálogo abre, para QUALQUER driver —
   // não depende mais de `editingId` existir. `funcaoId` vai como
@@ -120,13 +141,45 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
     { enabled: showForm && storeId > 0 }
   );
 
+  // 🔴 R32 (CC1 da review final): a decisão sobre o que fazer com a
+  // sugestão é FUNÇÃO PURA, testada em `escala-config-ui.test.ts`. Antes,
+  // este efeito substituía o valor salvo pela sugestão nova sempre que a
+  // origem salva não fosse `definida_gestor` — o caso mais comum —, com o
+  // mesmo rótulo, sem o gestor pedir e sem ver. Agora:
+  //   aplicar   → só quando não há produtividade salva (ou o campo está
+  //               vazio): preencher é propor, não sobrescrever;
+  //   perguntar → mostra os dois valores e deixa o gestor escolher;
+  //   ignorar   → nada a fazer.
+  const decisaoSugestao = decidirAplicacaoSugestao({
+    origemSalva,
+    valorAtualCampo: form.produtividadeAlvo,
+    valorSugerido: sugestaoQuery.data?.valor,
+    produtividadeTocada,
+  });
+  const valorParaAplicar = decisaoSugestao.acao === "aplicar" ? decisaoSugestao.valor : null;
+  const divergencia = decisaoSugestao.acao === "perguntar" && !sugestaoDecidida ? decisaoSugestao : null;
+
   useEffect(() => {
-    if (!sugestaoQuery.data || produtividadeTocada) return;
-    const { valor } = sugestaoQuery.data;
-    if (valor != null) {
-      setForm((p) => ({ ...p, produtividadeAlvo: String(valor), produtividadeOrigem: "sugerida_historico" }));
-    }
-  }, [sugestaoQuery.data, produtividadeTocada]);
+    if (valorParaAplicar == null) return;
+    setForm((p) => ({
+      ...p,
+      produtividadeAlvo: produtividadeParaInput(valorParaAplicar),
+      produtividadeOrigem: "sugerida_historico",
+    }));
+  }, [valorParaAplicar]);
+
+  function aceitarSugestao(valor: number) {
+    setForm((p) => ({
+      ...p,
+      produtividadeAlvo: produtividadeParaInput(valor),
+      produtividadeOrigem: "sugerida_historico",
+    }));
+    setSugestaoDecidida(true);
+  }
+
+  function manterValorSalvo() {
+    setSugestaoDecidida(true);
+  }
 
   // R20: salvar volta a ser uma ação só — a produtividade já chega
   // pré-preenchida (sugestão ou valor do gestor) antes do primeiro clique
@@ -154,12 +207,16 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
     setEditingId(null);
     setForm(formVazio());
     setProdutividadeTocada(false);
+    setOrigemSalva(null);
+    setSugestaoDecidida(false);
   }
 
   function openNova() {
     setEditingId(null);
     setForm(formVazio());
     setProdutividadeTocada(false);
+    setOrigemSalva(null);
+    setSugestaoDecidida(false);
     setShowForm(true);
   }
 
@@ -170,12 +227,20 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
       driver: funcao.driver,
       minPorBloco: String(funcao.minPorBloco),
       maxPorBloco: funcao.maxPorBloco == null ? "" : String(funcao.maxPorBloco),
-      produtividadeAlvo: funcao.produtividadeAlvo == null ? "" : String(funcao.produtividadeAlvo),
+      produtividadeAlvo:
+        funcao.produtividadeAlvo == null ? "" : produtividadeParaInput(funcao.produtividadeAlvo),
       produtividadeOrigem: funcao.produtividadeOrigem,
     });
-    // Um valor que o gestor já definiu manualmente antes não é
-    // sobrescrito pela sugestão automática ao reabrir o formulário.
-    setProdutividadeTocada(funcao.produtividadeOrigem === "definida_gestor");
+    // 🔴 R32 (CC1): NENHUMA produtividade salva é sobrescrita pela sugestão
+    // ao reabrir o formulário — nem a de origem `sugerida_*`, que era
+    // justamente a que a versão anterior trocava em silêncio (ela nascia
+    // com `produtividadeTocada = false`, a query já habilitada, e o
+    // `useEffect` substituía o valor quando a resposta chegava). Quem
+    // decide isso agora é `origemSalva` + `decidirAplicacaoSugestao`;
+    // `produtividadeTocada` volta a significar só "digitou nesta sessão".
+    setProdutividadeTocada(false);
+    setOrigemSalva(funcao.produtividadeOrigem);
+    setSugestaoDecidida(false);
     setShowForm(true);
   }
 
@@ -202,7 +267,9 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
       nome: entrada.nome.trim(),
       driver: entrada.driver,
       produtividadeAlvo: entrada.produtividadeAlvo,
-      produtividadeOrigem: entrada.produtividadeAlvo == null ? null : form.produtividadeOrigem,
+      // CC2: invariante origem ↔ valor agora é função pura testada
+      // (`origemParaSalvar`), não um ternário solto aqui.
+      produtividadeOrigem: origemParaSalvar(entrada.produtividadeAlvo, form.produtividadeOrigem),
       minPorBloco: entrada.minPorBloco,
       maxPorBloco: entrada.maxPorBloco,
     });
@@ -253,7 +320,7 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
                 {funcao.produtividadeAlvo != null && (
                   <>
                     {" · "}
-                    {funcao.produtividadeAlvo} {DRIVER_LABELS[funcao.driver].toLowerCase()}/h
+                    {formatarProdutividade(funcao.produtividadeAlvo)} {DRIVER_LABELS[funcao.driver].toLowerCase()}/h
                     {funcao.produtividadeOrigem && ` (${rotuloOrigemProdutividade(funcao.produtividadeOrigem, funcao.driver)})`}
                   </>
                 )}
@@ -353,6 +420,29 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
                     <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-1">
                       {mensagemProdutividadeIndisponivel(sugestaoQuery.data?.motivo)}
                     </p>
+                  )}
+                  {/* 🔴 R32 (CC1): a sugestão nova DIVERGE da produtividade já
+                      salva. A tela mostra OS DOIS números e deixa o gestor
+                      escolher — nunca troca por conta própria, que era o
+                      defeito: ele abria para mudar o mínimo por bloco e
+                      salvava uma produtividade que nunca viu. */}
+                  {divergencia && (
+                    <div className="text-xs mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 space-y-2">
+                      <p className="text-sky-900">
+                        O histórico da loja sugere{" "}
+                        <strong>{formatarProdutividade(divergencia.valorSugerido)}</strong>{" "}
+                        {DRIVER_LABELS[form.driver].toLowerCase()}/h, diferente da produtividade salva desta função (
+                        <strong>{formatarProdutividade(divergencia.valorSalvo)}</strong>). Qual vale?
+                      </p>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={manterValorSalvo}>
+                          Manter {formatarProdutividade(divergencia.valorSalvo)}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => aceitarSugestao(divergencia.valorSugerido)}>
+                          Usar a sugestão ({formatarProdutividade(divergencia.valorSugerido)})
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </>
               )}

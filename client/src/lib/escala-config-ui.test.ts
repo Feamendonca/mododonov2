@@ -15,11 +15,18 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  arredondarProdutividade,
+  decidirAplicacaoSugestao,
+  devePermitirSobrescritaAutomatica,
   deveExibirAvisoProdutividadeIndisponivel,
+  formatarProdutividade,
   mensagemProdutividadeIndisponivel,
+  origemParaSalvar,
+  produtividadeParaInput,
   rotuloOrigemProdutividade,
   validarFuncao,
   type EntradaValidarFuncao,
+  type ParametrosDecisaoSugestao,
 } from "./escala-config-ui";
 
 function entradaValida(overrides: Partial<EntradaValidarFuncao> = {}): EntradaValidarFuncao {
@@ -250,5 +257,192 @@ describe("deveExibirAvisoProdutividadeIndisponivel — I1: não pode contradizer
         produtividadeAtual: "15",
       }),
     ).toBe(false);
+  });
+});
+
+// ─── CC4: nome é medido TRIMADO, igual ao servidor ──────────────────────────
+//
+// O servidor é `z.string().trim().min(1).max(64)` — ele trima ANTES de
+// medir. A tela media `nome.length` cru: um nome de 65 caracteres cujo
+// último é espaço (64 úteis) era aceito pelo servidor e rejeitado pela
+// tela. Proibição fantasma: a tela mais apertada que a tranca.
+
+describe("validarFuncao — CC4: comprimento do nome é medido depois do trim (igual ao servidor)", () => {
+  const SESSENTA_E_QUATRO = "a".repeat(64);
+
+  it("64 caracteres úteis + espaços nas pontas → ACEITO (o servidor também aceita)", () => {
+    expect(validarFuncao(entradaValida({ nome: `  ${SESSENTA_E_QUATRO}  ` }))).toEqual([]);
+  });
+
+  it("exatamente 64 caracteres → aceito", () => {
+    expect(validarFuncao(entradaValida({ nome: SESSENTA_E_QUATRO }))).toEqual([]);
+  });
+
+  it("65 caracteres úteis → rejeitado (o servidor também rejeita)", () => {
+    expect(validarFuncao(entradaValida({ nome: "a".repeat(65) }))).toEqual([
+      "O nome da função pode ter no máximo 64 caracteres.",
+    ]);
+  });
+
+  it("65 caracteres úteis COM espaços em volta → continua rejeitado (trim não salva nome longo)", () => {
+    expect(validarFuncao(entradaValida({ nome: `   ${"a".repeat(65)}   ` }))).toEqual([
+      "O nome da função pode ter no máximo 64 caracteres.",
+    ]);
+  });
+
+  it("só espaços → erro de nome vazio, nunca de comprimento", () => {
+    expect(validarFuncao(entradaValida({ nome: "          " }))).toEqual(["Informe o nome da função."]);
+  });
+});
+
+// ─── 🔴 R32 / CC1: sobrescrita automática da produtividade ──────────────────
+
+describe("devePermitirSobrescritaAutomatica", () => {
+  it("sem origem salva (função nova) → pode preencher sozinho: não há nada do gestor a sobrescrever", () => {
+    expect(devePermitirSobrescritaAutomatica(null)).toBe(true);
+  });
+
+  it("origem salva sugerida_historico → NÃO pode (era exatamente o furo CC1: o caso mais comum)", () => {
+    expect(devePermitirSobrescritaAutomatica("sugerida_historico")).toBe(false);
+  });
+
+  it("origem salva sugerida_benchmark → NÃO pode", () => {
+    expect(devePermitirSobrescritaAutomatica("sugerida_benchmark")).toBe(false);
+  });
+
+  it("origem salva definida_gestor → NÃO pode", () => {
+    expect(devePermitirSobrescritaAutomatica("definida_gestor")).toBe(false);
+  });
+});
+
+describe("decidirAplicacaoSugestao", () => {
+  function params(overrides: Partial<ParametrosDecisaoSugestao> = {}): ParametrosDecisaoSugestao {
+    return {
+      origemSalva: null,
+      valorAtualCampo: "",
+      valorSugerido: 12,
+      produtividadeTocada: false,
+      ...overrides,
+    };
+  }
+
+  it("função nova com campo vazio → aplica a sugestão (propor não é sobrescrever)", () => {
+    expect(decidirAplicacaoSugestao(params())).toEqual({ acao: "aplicar", valor: 12 });
+  });
+
+  it("🔴 valor salvo com origem sugerida_historico e sugestão DIFERENTE → PERGUNTA, nunca substitui", () => {
+    const decisao = decidirAplicacaoSugestao(
+      params({ origemSalva: "sugerida_historico", valorAtualCampo: "9", valorSugerido: 12 })
+    );
+    expect(decisao).toEqual({ acao: "perguntar", valorSalvo: 9, valorSugerido: 12 });
+  });
+
+  it("valor salvo com origem definida_gestor e sugestão diferente → também pergunta (não ignora a sugestão em silêncio)", () => {
+    expect(
+      decidirAplicacaoSugestao(
+        params({ origemSalva: "definida_gestor", valorAtualCampo: "20", valorSugerido: 12 })
+      )
+    ).toEqual({ acao: "perguntar", valorSalvo: 20, valorSugerido: 12 });
+  });
+
+  it("sugestão igual ao valor salvo → ignora (não há decisão a tomar)", () => {
+    expect(
+      decidirAplicacaoSugestao(
+        params({ origemSalva: "sugerida_historico", valorAtualCampo: "12", valorSugerido: 12 })
+      )
+    ).toEqual({ acao: "ignorar" });
+  });
+
+  it("diferença invisível na tela (11.3 × 11.333333) → ignora, não pergunta sobre o que não se vê", () => {
+    expect(
+      decidirAplicacaoSugestao(
+        params({ origemSalva: "sugerida_historico", valorAtualCampo: "11.3", valorSugerido: 11.333333333333334 })
+      )
+    ).toEqual({ acao: "ignorar" });
+  });
+
+  it("gestor digitando agora (produtividadeTocada) → ignora, mesmo em função nova", () => {
+    expect(
+      decidirAplicacaoSugestao(params({ produtividadeTocada: true, valorAtualCampo: "30" }))
+    ).toEqual({ acao: "ignorar" });
+  });
+
+  it("servidor sem base (valor null/undefined) → ignora", () => {
+    expect(decidirAplicacaoSugestao(params({ valorSugerido: null }))).toEqual({ acao: "ignorar" });
+    expect(decidirAplicacaoSugestao(params({ valorSugerido: undefined }))).toEqual({ acao: "ignorar" });
+  });
+
+  it("sugestão NaN/Infinity → ignora (nunca vira valor de campo)", () => {
+    expect(decidirAplicacaoSugestao(params({ valorSugerido: Number.NaN }))).toEqual({ acao: "ignorar" });
+    expect(decidirAplicacaoSugestao(params({ valorSugerido: Number.POSITIVE_INFINITY }))).toEqual({
+      acao: "ignorar",
+    });
+  });
+
+  it("função com origem salva mas campo vazio (produtividade apagada) → aplica: não há valor a preservar", () => {
+    expect(
+      decidirAplicacaoSugestao(params({ origemSalva: "sugerida_historico", valorAtualCampo: "" }))
+    ).toEqual({ acao: "aplicar", valor: 12 });
+  });
+
+  it("campo com lixo não numérico e origem salva → ignora em vez de perguntar sobre NaN", () => {
+    expect(
+      decidirAplicacaoSugestao(params({ origemSalva: "definida_gestor", valorAtualCampo: "abc" }))
+    ).toEqual({ acao: "ignorar" });
+  });
+});
+
+// ─── CC2: invariante origem ↔ valor ─────────────────────────────────────────
+
+describe("origemParaSalvar", () => {
+  it("sem valor → origem null (nunca 'definida por você' sem número)", () => {
+    expect(origemParaSalvar(null, "definida_gestor")).toBeNull();
+    expect(origemParaSalvar(undefined, "sugerida_historico")).toBeNull();
+  });
+
+  it("com valor e com origem → preserva a origem", () => {
+    expect(origemParaSalvar(12, "sugerida_historico")).toBe("sugerida_historico");
+    expect(origemParaSalvar(12, "sugerida_benchmark")).toBe("sugerida_benchmark");
+    expect(origemParaSalvar(12, "definida_gestor")).toBe("definida_gestor");
+  });
+
+  it("com valor e SEM origem → definida_gestor (nunca atribuir ao histórico um número que ele não produziu)", () => {
+    expect(origemParaSalvar(12, null)).toBe("definida_gestor");
+  });
+
+  it("valor 0 não é tratado como ausência (0 é inválido por outro motivo, não por este)", () => {
+    expect(origemParaSalvar(0, null)).toBe("definida_gestor");
+  });
+});
+
+// ─── CC3: formatação da produtividade ───────────────────────────────────────
+
+describe("formatarProdutividade / produtividadeParaInput", () => {
+  it("float cru da mediana vira 1 casa decimal (11.333333333333334 → 11,3)", () => {
+    expect(formatarProdutividade(11.333333333333334)).toBe("11,3");
+  });
+
+  it("inteiro não ganha casa decimal pendurada", () => {
+    expect(formatarProdutividade(12)).toBe("12");
+  });
+
+  it("arredonda para cima a partir de .x5", () => {
+    expect(formatarProdutividade(11.35)).toBe("11,4");
+  });
+
+  it("valor não finito vira travessão em vez de 'NaN' na tela", () => {
+    expect(formatarProdutividade(Number.NaN)).toBe("—");
+    expect(formatarProdutividade(Number.POSITIVE_INFINITY)).toBe("—");
+  });
+
+  it("produtividadeParaInput usa ponto decimal (input type=number não aceita vírgula)", () => {
+    expect(produtividadeParaInput(11.333333333333334)).toBe("11.3");
+    expect(produtividadeParaInput(12)).toBe("12");
+    expect(produtividadeParaInput(Number.NaN)).toBe("");
+  });
+
+  it("arredondarProdutividade é a mesma régua usada na comparação salvo × sugerido", () => {
+    expect(arredondarProdutividade(11.333333333333334)).toBe(11.3);
+    expect(arredondarProdutividade(11.3)).toBe(11.3);
   });
 });

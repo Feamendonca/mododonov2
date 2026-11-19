@@ -42,9 +42,17 @@ export interface EntradaValidarFuncao {
 export function validarFuncao(entrada: EntradaValidarFuncao): string[] {
   const erros: string[] = [];
 
-  if (entrada.nome.trim().length === 0) {
+  // CC4 (review final): a comparação era contra `nome.length` (não-trimado)
+  // enquanto o servidor é `z.string().trim().max(64)` — ou seja, o servidor
+  // mede o nome JÁ TRIMADO. Um nome de 65 caracteres terminando em espaço
+  // (64 úteis) era ACEITO pelo servidor e REJEITADO pela tela: proibição
+  // fantasma, com a tela mais restritiva que a tranca real — o inverso da
+  // premissa deste módulo (a tela espelha o servidor, nunca o contrário).
+  // Mesmo defeito que o M3 da Task 5 corrigiu na direção oposta.
+  const nomeTrimado = entrada.nome.trim();
+  if (nomeTrimado.length === 0) {
     erros.push("Informe o nome da função.");
-  } else if (entrada.nome.length > 64) {
+  } else if (nomeTrimado.length > 64) {
     erros.push("O nome da função pode ter no máximo 64 caracteres.");
   }
 
@@ -179,4 +187,140 @@ export function deveExibirAvisoProdutividadeIndisponivel(
   if (params.produtividadeTocada) return false;
   if (params.produtividadeAtual !== "") return false;
   return (params.valorSugerido ?? null) == null;
+}
+
+// ─── 🔴 R32 (CC1 da review final): sugestão nunca sobrescreve em silêncio ────
+//
+// O defeito: `openEdit` só marcava "não sobrescrever" quando a origem salva
+// era `definida_gestor`. Para `sugerida_historico`/`sugerida_benchmark` — o
+// caso MAIS COMUM — o formulário nascia "livre", a query de sugestão já
+// estava habilitada, e quando a resposta chegava o `useEffect` TROCAVA o
+// valor salvo pela sugestão nova, mantendo o mesmo rótulo de origem. O
+// gestor abria a função para mudar `minPorBloco`, salvava, e gravava uma
+// produtividade que nunca viu.
+//
+// Isso viola o princípio-âncora do app — "a IA propõe, o humano confirma, a
+// IA nunca grava sozinha" — no módulo que deveria ser o exemplo dele. A
+// decisão agora é função pura, testada, e o comportamento mudou: quando a
+// sugestão DIVERGE do valor salvo, a tela mostra OS DOIS e deixa o gestor
+// escolher; nunca substitui por conta própria.
+
+/**
+ * Pode a sugestão do servidor preencher o campo automaticamente, sem
+ * perguntar? Só quando NÃO existe produtividade salva para esta função —
+ * isto é, quando não há nada do gestor para sobrescrever.
+ *
+ * `origemSalva` é a origem QUE ESTÁ NO BANCO (não a do formulário, que
+ * muda enquanto ele digita). Qualquer origem salva — inclusive
+ * `sugerida_historico`/`sugerida_benchmark` — significa que aquele número
+ * já passou pelo gestor uma vez: ele viu, aceitou e salvou. Substituir sem
+ * avisar seria gravar por ele.
+ */
+export function devePermitirSobrescritaAutomatica(origemSalva: ProdutividadeOrigem | null): boolean {
+  return origemSalva === null;
+}
+
+/** O que a tela deve fazer com a sugestão que acabou de chegar. */
+export type DecisaoSugestao =
+  | { acao: "ignorar" }
+  | { acao: "aplicar"; valor: number }
+  | { acao: "perguntar"; valorSalvo: number; valorSugerido: number };
+
+export interface ParametrosDecisaoSugestao {
+  /** Origem da produtividade JÁ SALVA (null = função nova, ou sem produtividade salva). */
+  origemSalva: ProdutividadeOrigem | null;
+  /** Conteúdo atual do input (string) — "" quando vazio. */
+  valorAtualCampo: string;
+  /** `sugestaoQuery.data?.valor` — `null`/`undefined` quando o servidor não tem base. */
+  valorSugerido: number | null | undefined;
+  /** O gestor digitou um valor manualmente NESTA sessão de edição. */
+  produtividadeTocada: boolean;
+}
+
+/**
+ * Decide, sem React e sem I/O, o destino da sugestão:
+ *  - `ignorar`   — não há sugestão, o gestor está digitando agora, ou a
+ *                  sugestão é igual ao que já está no campo (nada a decidir);
+ *  - `aplicar`   — campo vazio ou função sem produtividade salva: preencher
+ *                  é propor, não sobrescrever;
+ *  - `perguntar` — existe valor salvo E a sugestão é diferente: a tela
+ *                  mostra os dois lado a lado e o gestor escolhe.
+ *
+ * A comparação usa a mesma precisão de exibição (1 casa — ver
+ * `formatarProdutividade`): perguntar por causa de 11.333333 × 11.3 seria
+ * perguntar sobre uma diferença que a tela nem mostra.
+ */
+export function decidirAplicacaoSugestao(params: ParametrosDecisaoSugestao): DecisaoSugestao {
+  const sugerido = params.valorSugerido ?? null;
+  if (sugerido === null || !Number.isFinite(sugerido)) return { acao: "ignorar" };
+  if (params.produtividadeTocada) return { acao: "ignorar" };
+
+  const campoVazio = params.valorAtualCampo.trim() === "";
+  if (campoVazio || devePermitirSobrescritaAutomatica(params.origemSalva)) {
+    return { acao: "aplicar", valor: sugerido };
+  }
+
+  const salvo = Number(params.valorAtualCampo);
+  if (!Number.isFinite(salvo)) return { acao: "ignorar" };
+  if (arredondarProdutividade(salvo) === arredondarProdutividade(sugerido)) return { acao: "ignorar" };
+
+  return { acao: "perguntar", valorSalvo: salvo, valorSugerido: sugerido };
+}
+
+// ─── CC2 (review final): invariante origem ↔ valor, fora do .tsx ─────────────
+
+/**
+ * A origem que deve ser GRAVADA junto da produtividade, dada a dupla
+ * (valor, origem do formulário). Invariante em um lugar só, testado:
+ *
+ *  - sem valor (`null`) ⇒ origem `null`. Guardar "definida por você" sem
+ *    número deixaria a tela afirmando uma decisão que não existe.
+ *  - com valor e sem origem ⇒ `definida_gestor`. Um número só chega ao
+ *    campo porque o gestor digitou ou porque ele aceitou uma sugestão; se
+ *    a origem se perdeu no caminho, o responsável é quem está salvando —
+ *    nunca atribuir ao histórico um número que o histórico não produziu.
+ *  - com valor e com origem ⇒ a própria origem.
+ *
+ * Antes isto era um ternário solto dentro de `ConfiguracaoFuncoes.tsx`
+ * (`produtividadeAlvo == null ? null : form.produtividadeOrigem`), que
+ * cobria só o primeiro caso e deixava passar `{valor: 12, origem: null}`.
+ */
+export function origemParaSalvar(
+  produtividadeAlvo: number | null | undefined,
+  origemDoFormulario: ProdutividadeOrigem | null,
+): ProdutividadeOrigem | null {
+  if (produtividadeAlvo == null) return null;
+  return origemDoFormulario ?? "definida_gestor";
+}
+
+// ─── CC3 (review final): produtividade exibida com precisão falsa ────────────
+
+/**
+ * Arredonda a produtividade para a precisão com que ela é EXIBIDA (1 casa
+ * decimal). Usada também na comparação salvo × sugerido
+ * (`decidirAplicacaoSugestao`) para que a tela nunca pergunte sobre uma
+ * diferença invisível.
+ */
+export function arredondarProdutividade(valor: number): number {
+  return Math.round(valor * 10) / 10;
+}
+
+/**
+ * Texto da produtividade para exibição: 1 casa decimal, vírgula (pt-BR), e
+ * sem ".0" pendurado em número inteiro. A mediana do histórico sai de uma
+ * divisão (`atendimentos ÷ pessoas-hora`) e chegava crua na tela —
+ * `11.333333333333334 tickets/h` —, que é a mesma família do R22: precisão
+ * falsa. Ninguém escala gente com 13 casas decimais.
+ */
+export function formatarProdutividade(valor: number): string {
+  if (!Number.isFinite(valor)) return "—";
+  const arredondado = arredondarProdutividade(valor);
+  return arredondado.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+}
+
+/** Mesma precisão, mas para dentro de um `<input type="number">`, que não
+ * aceita vírgula — ponto decimal e sem separador de milhar. */
+export function produtividadeParaInput(valor: number): string {
+  if (!Number.isFinite(valor)) return "";
+  return String(arredondarProdutividade(valor));
 }

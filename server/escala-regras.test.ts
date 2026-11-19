@@ -428,3 +428,120 @@ describe("resolverRegras — integração com a linha do tempo real da EC 141/20
     expect(regraObrigatoria(mapaHoje, "domingos_folga_mulher_mes").tipo).toBe("DEPENDE_CCT");
   });
 });
+
+// ─── 🔴 R26 (C1 da review final): tipo entra na precedência ──────────────────
+//
+// O furo que anulava o módulo: `vence()` decidia só por escopo → vigência →
+// fonte, e `tipo` nunca entrava. Uma `MOLE` de escopo LOJA derrubava a
+// `DURA` de rede — e `upsertRegraLoja` liberava exatamente isso. Os testes
+// abaixo provam COMPORTAMENTO (o valor que o motor leria), não a forma da
+// implementação, e colocam a regra perdedora em mais de uma posição do
+// array para não passar por acidente de ordenação.
+
+describe("resolverRegras — R26: DURA de escopo mais amplo não cai para MOLE/DEPENDE_CCT mais específica", () => {
+  it("MOLE de loja NÃO derruba DURA de rede — em qualquer ordem do array", () => {
+    const moleDaLoja = regra({
+      storeId: 10,
+      chave: "jornada_max_semanal",
+      valor: 60,
+      tipo: "MOLE",
+      fonte: "politica da loja",
+    });
+    const duraDaRede = regra({ chave: "jornada_max_semanal", valor: 42, tipo: "DURA" });
+
+    for (const entrada of [[moleDaLoja, duraDaRede], [duraDaRede, moleDaLoja]]) {
+      const resolvida = regraObrigatoria(resolverRegras(entrada, CTX_PADRAO), "jornada_max_semanal");
+      expect(resolvida.valor).toBe(42);
+      expect(resolvida.tipo).toBe("DURA");
+      expect(resolvida.escopo).toBe("rede");
+    }
+  });
+
+  it("DEPENDE_CCT de loja NÃO derruba DURA de rede", () => {
+    const dependeDaLoja = regra({
+      storeId: 10,
+      chave: "repousos_por_semana",
+      valor: 1,
+      tipo: "DEPENDE_CCT",
+    });
+    const duraDaRede = regra({ chave: "repousos_por_semana", valor: 2, tipo: "DURA" });
+
+    const resolvida = regraObrigatoria(
+      resolverRegras([dependeDaLoja, duraDaRede], CTX_PADRAO),
+      "repousos_por_semana",
+    );
+    expect(resolvida.valor).toBe(2);
+  });
+
+  it("MOLE de UF também não derruba DURA de rede (vale para qualquer escopo, não só loja)", () => {
+    const moleDaUf = regra({ uf: "SP", chave: "jornada_max_diaria", valor: 14, tipo: "MOLE" });
+    const duraDaRede = regra({ chave: "jornada_max_diaria", valor: 10, tipo: "DURA" });
+
+    expect(
+      regraObrigatoria(resolverRegras([moleDaUf, duraDaRede], CTX_PADRAO), "jornada_max_diaria").valor,
+    ).toBe(10);
+  });
+
+  it("entre regras da MESMA força a escada de escopo continua valendo: DURA de UF vence DURA de rede", () => {
+    // Caso legítimo que a correção não pode matar: CCT/lei estadual mais
+    // restritiva, cadastrada como trava de praça.
+    const duraDaUf = regra({ uf: "SP", chave: "jornada_max_semanal", valor: 40, tipo: "DURA" });
+    const duraDaRede = regra({ chave: "jornada_max_semanal", valor: 42, tipo: "DURA" });
+
+    const resolvida = regraObrigatoria(
+      resolverRegras([duraDaRede, duraDaUf], CTX_PADRAO),
+      "jornada_max_semanal",
+    );
+    expect(resolvida.valor).toBe(40);
+    expect(resolvida.escopo).toBe("uf");
+  });
+
+  it("entre duas MOLE, a de loja continua vencendo a de rede (preferência de loja segue funcionando)", () => {
+    const moleDaLoja = regra({ storeId: 10, chave: "folga_preferencial", valor: "domingo", tipo: "MOLE" });
+    const moleDaRede = regra({ chave: "folga_preferencial", valor: null, tipo: "MOLE" });
+
+    const resolvida = regraObrigatoria(
+      resolverRegras([moleDaRede, moleDaLoja], CTX_PADRAO),
+      "folga_preferencial",
+    );
+    expect(resolvida.valor).toBe("domingo");
+    expect(resolvida.escopo).toBe("loja");
+  });
+
+  it("PONTA A PONTA com o seed REAL: a MOLE de loja de 60h não tira a DURA de 42h da EC 141 do mapa", () => {
+    // Exatamente o cenário que o revisor provou rodando o código real.
+    const moleDaLoja = regra({
+      storeId: 10,
+      chave: "jornada_max_semanal",
+      valor: 60,
+      tipo: "MOLE",
+      fonte: "politica interna da loja",
+    });
+    const data = "2026-12-16"; // já sob a EC 141
+    const mapa = resolverRegras([...REGRAS_LEGAIS_INICIAIS, moleDaLoja], { ...CTX_PADRAO, data });
+
+    const resolvida = regraObrigatoria(mapa, "jornada_max_semanal");
+    expect(resolvida.valor).toBe(42);
+    expect(resolvida.tipo).toBe("DURA");
+    expect(resolvida.fonte).toContain("EC 141/2026");
+  });
+});
+
+// ─── Menor (review final): regraObrigatoria rejeita valor nulo ───────────────
+
+describe("regraObrigatoria — valor nulo é tão inválido quanto chave ausente", () => {
+  it("regra vigente com valor null lança RegraAusenteError (motivo valor-nulo) em vez de virar 0 no motor", () => {
+    const mapa = resolverRegras([regra({ chave: "jornada_max_semanal", valor: null })], CTX_PADRAO);
+    expect(() => regraObrigatoria(mapa, "jornada_max_semanal")).toThrow(RegraAusenteError);
+    try {
+      regraObrigatoria(mapa, "jornada_max_semanal");
+    } catch (erro) {
+      expect((erro as InstanceType<typeof RegraAusenteError>).motivo).toBe("valor-nulo");
+    }
+  });
+
+  it("valor 0 continua válido — zero é dado, nulo é ausência", () => {
+    const mapa = resolverRegras([regra({ chave: "adicional_noturno_inicio", valor: 0 })], CTX_PADRAO);
+    expect(regraObrigatoria(mapa, "adicional_noturno_inicio").valor).toBe(0);
+  });
+});

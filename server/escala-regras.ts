@@ -11,6 +11,10 @@
  * Regras de precedência (spec seção 1 + task-2-brief.md):
  *   1. Regras cuja vigência não cobre a data consultada são descartadas
  *      ANTES de qualquer comparação de escopo.
+ *   1.5 🔴 FORÇA DO TIPO vem ANTES do escopo (R26): uma regra `DURA` só
+ *      pode ser derrubada por outra `DURA`. `MOLE`/`DEPENDE_CCT` NUNCA
+ *      vencem uma `DURA`, por mais específico que seja o escopo delas.
+ *      Ver a nota "Por que `tipo` entra antes de escopo" abaixo.
  *   2. Peso de escopo: loja (3) > uf (2) > rede (1). Uma regra com
  *      `storeId` preenchido é escopo loja; só com `uf` preenchido é
  *      escopo uf; sem nenhum dos dois é rede. (O campo `cct` não entra
@@ -34,7 +38,41 @@
  * pode cair no regime antigo sem erro só porque comparação de string
  * lexicográfica "funcionou por acaso".
  *
- * Ver .superpowers/sdd/2026-11-19-escala-configuracao/task-2-brief.md.
+ * ─── Por que `tipo` entra antes de escopo (R26 — C1 da review final) ───
+ *
+ * A versão anterior deste arquivo decidia precedência SÓ por escopo →
+ * vigência → fonte; `tipo` não entrava em lugar nenhum. Consequência
+ * provada rodando o código real: gravar `{chave: "jornada_max_semanal",
+ * valor: 60, tipo: "MOLE"}` em escopo LOJA fazia a `DURA` de 42h da EC
+ * 141/2026 (escopo rede) SUMIR do mapa resolvido — sem erro, sem aviso.
+ * Qualquer usuário com acesso à loja reescrevia a lei pela tela, e o
+ * módulo inteiro (que existe para a empresa não gerar escala ilegal)
+ * virava decorativo.
+ *
+ * Semântica escolhida (e por que esta, entre as possíveis):
+ *
+ *   `DURA` é TRAVA LEGAL. Só outra trava legal pode substituí-la.
+ *   `MOLE` (preferência) e `DEPENDE_CCT` (marcação de risco) são, por
+ *   definição, coisas que NÃO podem revogar uma trava — então nunca
+ *   vencem uma `DURA`, independentemente do escopo.
+ *
+ *   Entre regras da MESMA força (`DURA` × `DURA`, ou não-`DURA` ×
+ *   não-`DURA`), a escada de escopo continua valendo como antes: loja >
+ *   uf > rede. É o que mantém legítimo o caso real de uma `DURA`
+ *   estadual/da praça ser mais restritiva que a de rede (a AMFoods opera
+ *   em RS/SC/PR/SP/MG/RJ, com CCTs diferentes) — descartar isso também
+ *   seria errado, só que no sentido oposto.
+ *
+ * Quem grava regra de loja tem a SEGUNDA trava, em `db-escala-config.ts`
+ * (`upsertRegraLoja`): nenhuma chave do catálogo legal de rede
+ * (`CHAVES_LEGAIS_REDE`) pode ser cadastrada em escopo loja, em tipo
+ * NENHUM — nem `MOLE`. As duas travas são independentes de propósito:
+ * esta função fecha a precedência para qualquer linha que chegue ao
+ * banco por qualquer caminho (inclusive SQL manual), e o upsert fecha a
+ * porta da tela.
+ *
+ * Ver .superpowers/sdd/2026-11-19-escala-configuracao/task-2-brief.md e
+ * o ruling R26 em progress.md.
  */
 import type { RegraSeed, TipoRegra } from "./escala-catalogo-seed";
 
@@ -61,11 +99,22 @@ export interface ContextoResolucao {
  */
 export class RegraAusenteError extends Error {
   readonly chave: string;
+  /** `"sem-regra"`: nenhuma regra aplicável cobre data/escopo.
+   * `"valor-nulo"`: existe regra vigente, mas com `valor` nulo — o motor
+   * leria isso como 0 (`Number(null) === 0`), que é uma trava legal
+   * inventada do nada. Os dois casos falham alto, mas a razão muda o que
+   * o operador precisa consertar (semear o catálogo × corrigir a linha). */
+  readonly motivo: "sem-regra" | "valor-nulo";
 
-  constructor(chave: string) {
-    super(`Nenhuma regra vigente encontrada para a chave "${chave}".`);
+  constructor(chave: string, motivo: "sem-regra" | "valor-nulo" = "sem-regra") {
+    super(
+      motivo === "valor-nulo"
+        ? `A regra vigente para a chave "${chave}" está com valor nulo — o motor leria isso como 0. Corrija o cadastro da regra.`
+        : `Nenhuma regra vigente encontrada para a chave "${chave}".`,
+    );
     this.name = "RegraAusenteError";
     this.chave = chave;
+    this.motivo = motivo;
   }
 }
 
@@ -148,12 +197,27 @@ function aplicaAoContexto(regra: RegraSeed, ctx: ContextoResolucao): boolean {
   return true;
 }
 
+/** `true` para `DURA` — a única força capaz de derrubar outra `DURA`
+ * (R26). Isolada numa função nomeada para que a regra apareça por extenso
+ * em `vence()` em vez de virar uma comparação de string solta. */
+function ehTrava(regra: RegraSeed): boolean {
+  return regra.tipo === "DURA";
+}
+
 /** Entre duas regras candidatas da mesma chave, decide qual vence:
- * (1) maior peso de escopo; (2) no empate, vigenciaInicio mais recente
- * (null = "sempre", portanto o mais antigo possível); (3) no empate
- * total — mesmo escopo E mesma vigenciaInicio —, `fonte` em ordem
- * alfabética ascendente, nunca a ordem de chegada no array. */
+ * (0) 🔴 R26 — força do tipo: `DURA` vence qualquer não-`DURA`,
+ * independentemente do escopo. Uma `MOLE` de loja NUNCA derruba a `DURA`
+ * de rede (era por aí que a EC 141 saía do mapa resolvido);
+ * (1) mesma força → maior peso de escopo (loja > uf > rede);
+ * (2) no empate de escopo, vigenciaInicio mais recente (null = "sempre",
+ * portanto o mais antigo possível); (3) no empate total — mesma força,
+ * mesmo escopo E mesma vigenciaInicio —, `fonte` em ordem alfabética
+ * ascendente, nunca a ordem de chegada no array. */
 function vence(candidata: RegraSeed, atual: RegraSeed): boolean {
+  const travaCandidata = ehTrava(candidata);
+  const travaAtual = ehTrava(atual);
+  if (travaCandidata !== travaAtual) return travaCandidata;
+
   const pesoCandidata = PESO_ESCOPO[escopoDaRegra(candidata)];
   const pesoAtual = PESO_ESCOPO[escopoDaRegra(atual)];
   if (pesoCandidata !== pesoAtual) return pesoCandidata > pesoAtual;
@@ -241,6 +305,14 @@ export function regraObrigatoria(
   const regra = mapa.get(chave);
   if (regra === undefined) {
     throw new RegraAusenteError(chave);
+  }
+  // Menor (review final): a chave existir não basta — `valor: null` chega
+  // ao motor e vira 0 na primeira conta aritmética (`Number(null) === 0`),
+  // exatamente o desfecho que esta função existe para impedir. Uma trava
+  // de 0h/semana ou 0 repousos é tão silenciosamente ilegal quanto a
+  // ausência da regra; falha alto, pelo mesmo caminho.
+  if (regra.valor === null || regra.valor === undefined) {
+    throw new RegraAusenteError(chave, "valor-nulo");
   }
   return regra;
 }

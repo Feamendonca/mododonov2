@@ -368,6 +368,25 @@ function avaliarRegras(estado: QueryEstado<RegrasVigentesResposta>): AvaliacaoPa
   // engolido — precisa aparecer na tela independente do passo estar
   // completo ou não.
   const avisoExtra = avisoUfParaExibir(estado.data);
+  // 🔴 R28 (C3 da review final): ZERO regras vigentes é o pior estado
+  // possível deste passo, não o melhor. Antes, lista vazia ⇒ zero
+  // pendentes ⇒ passo COMPLETO, com a razão "todas as regras legais
+  // vigentes foram revisadas" — e `podeGerarEscala` virava `true`.
+  // Combinado com o seed que nunca rodava (C2/R27), esse era literalmente
+  // o estado do dia 1: quatro passos verdes afirmando que a lei foi
+  // conferida, sem uma única lei carregada. Nada aqui pode concluir
+  // "revisado" a partir de uma lista vazia: ausência de regra é ausência
+  // de informação, nunca conformidade.
+  if (estado.data.regras.length === 0) {
+    return {
+      passo: "regras",
+      titulo,
+      completo: false,
+      razao:
+        "Nenhuma regra legal carregada para esta loja — o catálogo legal precisa ser semeado no banco (npm run escala:seed). Sem regra vigente não há o que revisar, e a escala não pode ser gerada.",
+      avisoExtra,
+    };
+  }
   const pendentes = regrasPendentesDeConfirmacao(estado.data.regras, estado.data.chavesConfirmadas);
   if (pendentes.length > 0) {
     const chaves = pendentes.map((p) => p.chave).join(", ");

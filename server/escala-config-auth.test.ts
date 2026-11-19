@@ -532,11 +532,34 @@ describe("upsertRegraLoja (função real, sem mock) — I6: whitelist de verdade
     ).rejects.toBeInstanceOf(real.RegraLojaNaoPermitidaError);
   });
 
-  it("chave do catálogo legal de rede + tipo MOLE → passa do whitelist (segue pro banco)", async () => {
+  // 🔴 R26 (C1 da review final) — ESTE TESTE FOI INVERTIDO.
+  // A versão anterior afirmava que `MOLE` numa chave legal "passa do
+  // whitelist (segue pro banco)". Era a consagração do furo: até a
+  // correção do R26, `vence()` (escala-regras.ts) não olhava `tipo`, e
+  // essa MOLE de escopo loja DERRUBAVA a DURA de 42h da EC 141 — provado
+  // rodando o resolvedor real (ver o teste ponta a ponta em
+  // escala-regras.test.ts). Agora chave legal é rejeitada em tipo nenhum.
+  it("chave do catálogo legal de rede + tipo MOLE → TAMBÉM rejeita (R26: qualquer tipo)", async () => {
     const real = await vi.importActual<typeof import("./db-escala-config")>("./db-escala-config");
     await expect(
       real.upsertRegraLoja(1, { chave: "jornada_max_semanal", valor: 60, tipo: "MOLE", fonte: "teste" })
-    ).rejects.not.toBeInstanceOf(real.RegraLojaNaoPermitidaError);
+    ).rejects.toBeInstanceOf(real.RegraLojaNaoPermitidaError);
+  });
+
+  it("TODA chave de REGRAS_LEGAIS_INICIAIS é rejeitada, em TODOS os três tipos — nenhuma escapa por omissão", async () => {
+    const real = await vi.importActual<typeof import("./db-escala-config")>("./db-escala-config");
+    const seed = await vi.importActual<typeof import("./escala-catalogo-seed")>("./escala-catalogo-seed");
+    const chaves = Array.from(new Set(seed.REGRAS_LEGAIS_INICIAIS.map((r) => r.chave)));
+    expect(chaves.length).toBeGreaterThan(0);
+
+    for (const chave of chaves) {
+      for (const tipo of ["DURA", "MOLE", "DEPENDE_CCT"] as const) {
+        await expect(
+          real.upsertRegraLoja(1, { chave, valor: 1, tipo, fonte: "teste" }),
+          `${chave} / ${tipo} deveria ser rejeitada em escopo loja`
+        ).rejects.toBeInstanceOf(real.RegraLojaNaoPermitidaError);
+      }
+    }
   });
 
   it("chave que não existe no catálogo legal de rede → passa do whitelist mesmo com DURA", async () => {

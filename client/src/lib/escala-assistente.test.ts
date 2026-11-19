@@ -442,3 +442,50 @@ describe("escalasDisponiveis", () => {
     expect(resultado[0].disponivel).toBe(false);
   });
 });
+
+// ─── 🔴 R28 (C3 da review final): zero regras = INCOMPLETO ───────────────────
+//
+// Zero regras vigentes ⇒ zero pendentes ⇒ a versão anterior marcava o passo
+// como COMPLETO, com a razão "Todas as regras legais vigentes foram
+// revisadas", e `podeGerarEscala` virava true. Combinado com o seed que
+// nunca rodava (C2/R27), esse era o estado do DIA 1: quatro passos verdes
+// afirmando que a lei foi conferida, sem nenhuma lei carregada.
+
+describe("avaliarPassos — R28: catálogo legal vazio nunca conta como revisado", () => {
+  function estadoSemRegras(): EstadoAssistente {
+    const estado = estadoCompleto();
+    estado.regras = {
+      isLoading: false,
+      data: { regras: [], chavesConfirmadas: [], avisoUfAusente: false, aviso: null },
+    };
+    return estado;
+  }
+
+  it("lista de regras vazia → passo INCOMPLETO, com razão explícita de catálogo não semeado", () => {
+    const [, , , regras] = avaliarPassos(estadoSemRegras());
+    expect(regras.completo).toBe(false);
+    expect(regras.razao).toMatch(/Nenhuma regra legal carregada/i);
+    expect(regras.razao).toMatch(/escala:seed/);
+    // E jamais a frase de conformidade do caminho feliz.
+    expect(regras.razao).not.toMatch(/foram revisadas/i);
+  });
+
+  it("lista de regras vazia → 'Gerar escala' continua bloqueado", () => {
+    expect(podeGerarEscala(avaliarPassos(estadoSemRegras()))).toBe(false);
+  });
+
+  it("o aviso de UF ausente continua aparecendo mesmo no estado de catálogo vazio", () => {
+    const estado = estadoSemRegras();
+    estado.regras.data!.avisoUfAusente = true;
+    estado.regras.data!.aviso = "Esta loja não tem estado (UF) cadastrado; regras estaduais não estão sendo aplicadas — somente as regras de rede.";
+    const [, , , regras] = avaliarPassos(estado);
+    expect(regras.completo).toBe(false);
+    expect(regras.avisoExtra).toMatch(/UF/);
+  });
+
+  it("com pelo menos uma regra vigente e nada pendente, o passo volta a ser completo (o caminho feliz segue intacto)", () => {
+    const [, , , regras] = avaliarPassos(estadoCompleto());
+    expect(regras.completo).toBe(true);
+    expect(regras.razao).toMatch(/foram revisadas/i);
+  });
+});

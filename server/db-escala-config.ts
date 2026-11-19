@@ -216,17 +216,25 @@ export const CHAVES_LEGAIS_REDE: ReadonlySet<string> = new Set(
   REGRAS_LEGAIS_INICIAIS.map((regra) => regra.chave)
 );
 
-/** Lançado quando `upsertRegraLoja` tentaria sobrescrever, em escopo loja,
- * uma chave do catálogo legal de rede com algo diferente de `MOLE` (I6).
- * `MOLE` é preferência, não trava — pode ser ajustada pela loja. `DURA`/
- * `DEPENDE_CCT` numa chave legal só entra pelo cadastro de rede (fora do
- * escopo desta task). */
+/** Lançado quando `upsertRegraLoja` tentaria cadastrar, em escopo loja,
+ * uma chave do catálogo legal de rede — em QUALQUER tipo.
+ *
+ * 🔴 R26 (C1 da review final): a versão anterior abria exceção para
+ * `MOLE`, com o argumento de que "MOLE é preferência, não trava". O
+ * argumento estava errado por um motivo concreto: até a correção do R26,
+ * `vence()` (escala-regras.ts) não olhava `tipo` nenhum — uma `MOLE` de
+ * escopo loja derrubava a `DURA` de rede do mesmo jeito, e a EC 141 sumia
+ * do mapa resolvido. Mesmo agora, com o resolvedor corrigido, a exceção
+ * continua fechada: uma "preferência" de loja cadastrada numa chave que é
+ * legal (`jornada_max_semanal`, `repousos_por_semana`, ...) não tem
+ * significado operacional legítimo — só serve para confundir a leitura do
+ * que é lei nessa loja. Preferências de loja usam chaves próprias. */
 export class RegraLojaNaoPermitidaError extends Error {
   readonly chave: string;
 
   constructor(chave: string) {
     super(
-      `"${chave}" é uma chave do catálogo legal de rede — a loja só pode cadastrá-la como regra MOLE (preferência). Sobrescrever DURA/DEPENDE_CCT por aqui derrubaria uma trava legal; isso exige o cadastro de rede.`
+      `"${chave}" é uma chave do catálogo legal de rede — a loja não pode cadastrá-la em escopo loja, em tipo nenhum (nem como MOLE). Regra legal muda no cadastro de rede, com data de vigência; o que a loja faz é CONFIRMAR as que dependem de CCT (confirmarRegraLoja).`
     );
     this.name = "RegraLojaNaoPermitidaError";
     this.chave = chave;
@@ -248,7 +256,10 @@ export class RegraLojaNaoPermitidaError extends Error {
  * busca por `IS NULL` explícito, depois UPDATE ou INSERT.
  */
 export async function upsertRegraLoja(storeId: number, data: UpsertRegraLojaInput): Promise<void> {
-  if (CHAVES_LEGAIS_REDE.has(data.chave) && data.tipo !== "MOLE") {
+  // 🔴 R26: qualquer tipo. A brecha do `!== "MOLE"` era o segundo lado do
+  // furo C1 (o primeiro era `vence()` ignorar `tipo`) — ver a nota em
+  // `RegraLojaNaoPermitidaError`.
+  if (CHAVES_LEGAIS_REDE.has(data.chave)) {
     throw new RegraLojaNaoPermitidaError(data.chave);
   }
 
