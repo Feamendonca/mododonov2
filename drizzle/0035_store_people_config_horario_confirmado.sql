@@ -1,0 +1,26 @@
+-- Migration 0035: `horarioConfirmadoEm` em `store_people_config`.
+-- Postgres/Supabase. Idempotente. Coluna camelCase entre aspas (mesma
+-- convenção das migrations 0027-0034).
+--
+-- R30 (I9 da review final, .superpowers/sdd/2026-11-19-escala-configuracao/):
+-- o passo 1 do assistente de configuração usava `configurado` (= "existe
+-- uma linha em store_people_config") como prova de que o gerente confirmou
+-- o horário de funcionamento da loja. Não é a mesma coisa: QUALQUER loja
+-- que já tenha salvo qualquer coisa no modal antigo de Configurações de
+-- Pessoas (encargos, meta de folha, custo de contratação) tem linha — e
+-- entraria no assistente com o passo 1 verde e 8h-23h que ninguém decidiu,
+-- herdados do DEFAULT da coluna. "Passo marcado como completo quando não
+-- está" é o primeiro item da lista de defeitos que este plano existe para
+-- evitar.
+--
+-- NULLABLE de propósito e SEM backfill: nulo significa exatamente "ninguém
+-- confirmou ainda", que é a verdade para toda linha existente hoje. Fazer
+-- backfill com `now()` seria inventar uma confirmação que nunca houve — o
+-- custo de errar para o outro lado é um gerente reconfirmar o horário uma
+-- vez, e esse é o lado certo de errar.
+--
+-- O carimbo é gravado por `pessoas.saveConfig` quando a chamada vem do
+-- assistente (`confirmarHorario: true`, junto dos dois horários). Nenhuma
+-- outra tela grava a coluna; o modal antigo continua salvando os mesmos
+-- campos de sempre, sem carimbar nada.
+ALTER TABLE store_people_config ADD COLUMN IF NOT EXISTS "horarioConfirmadoEm" TIMESTAMP;

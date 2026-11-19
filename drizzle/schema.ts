@@ -479,6 +479,17 @@ export const storePeopleConfig = pgTable("store_people_config", {
   hiringCost: numeric("hiringCost", { precision: 10, scale: 2 }).notNull().default("1500.00"),
   operationStartHour: integer("operationStartHour").notNull().default(8),
   operationEndHour: integer("operationEndHour").notNull().default(23),
+  /**
+   * Quando o gerente CONFIRMOU o horário de funcionamento pelo assistente
+   * de configuração da Escala. NULL = nunca confirmou — e aí os valores de
+   * `operationStartHour`/`operationEndHour` são o DEFAULT do sistema
+   * (8h-23h), não uma decisão de ninguém.
+   *
+   * R30 (I9 da review final): a existência da LINHA não prova confirmação
+   * — qualquer loja que já salvou encargos/meta de folha no modal antigo
+   * de Pessoas tem linha, com 8h-23h herdados do default. Migration 0035.
+   */
+  horarioConfirmadoEm: timestamp("horarioConfirmadoEm"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),
 });
@@ -988,6 +999,18 @@ export const escalasCatalogo = pgTable("escalas_catalogo", {
   exigeAcordoIndividual: boolean("exigeAcordoIndividual").notNull().default(false),
   exigeCCT: boolean("exigeCCT").notNull().default(false),
   observacaoLegal: text("observacaoLegal"),
+  /**
+   * 🔴 R29 (I7 da review final): travas legais que ESTE regime excepciona,
+   * com fundamento — `[{chaveRegra: "jornada_max_diaria", fundamento:
+   * "CLT art. 59-A"}]` na 12x36. NULL = nenhuma exceção.
+   *
+   * Sem isto o motor do Plano 3 (toda DURA é trava: viola → rejeita)
+   * descartaria a 12x36 por causa da DURA `jornada_max_diaria: 10` — ou
+   * alguém afrouxaria essa DURA para TODO mundo, que é como uma exceção
+   * pontual vira buraco geral. Por chave (não um booleano "é exceção"):
+   * diz qual trava, e com que base. Migration 0036.
+   */
+  excecoesLegais: jsonb("excecoesLegais"),
 }, (t) => ({
   uqEscalasCatalogoCodigoVigencia: uniqueIndex("uq_escalas_catalogo_codigo_vigencia").on(
     t.codigo,

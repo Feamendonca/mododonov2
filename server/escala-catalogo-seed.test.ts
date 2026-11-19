@@ -263,3 +263,83 @@ describe("unicidade de regras_escala cobre escopo uf/cct (R7)", () => {
     expect(new Set(chaves).size).toBe(chaves.length);
   });
 });
+
+// ─── 🔴 R29 (I6/I7 da review final): o catálogo não pode contradizer as
+// regras que ele mesmo cadastra ──────────────────────────────────────────────
+//
+// Os dois achados: (a) a 6x2 pós-EC oferecia um ciclo de 8 dias que NÃO
+// garante 2 repousos por semana civil, violando a DURA `repousos_por_semana:
+// 2` deste mesmo arquivo; (b) a 12x36 tem 12h/dia contra a DURA
+// `jornada_max_diaria: 10`, sem nada que dissesse ao motor que é exceção
+// legal. Um catálogo que contradiz as próprias travas produz escala ilegal
+// com aparência de aprovada.
+
+import { resolverRegras, regraObrigatoria } from "./escala-regras";
+
+describe("R29 — coerência entre CATALOGO_INICIAL e REGRAS_LEGAIS_INICIAIS", () => {
+  const POS_EC = "2026-12-16";
+
+  function regrasEm(data: string) {
+    return resolverRegras(REGRAS_LEGAIS_INICIAIS, { storeId: 1, uf: "SP", data });
+  }
+
+  function vigentesEm(data: string) {
+    return CATALOGO_INICIAL.filter(
+      (e) =>
+        (e.vigenciaInicio === null || e.vigenciaInicio <= data) &&
+        (e.vigenciaFim === null || e.vigenciaFim >= data),
+    );
+  }
+
+  it("I6: 6x2 não é oferecida a partir de 16/12/2026 (ciclo de 8 dias não garante 2 repousos na semana civil)", () => {
+    expect(vigentesEm("2026-12-15").some((e) => e.codigo === "6x2")).toBe(true);
+    expect(vigentesEm(POS_EC).some((e) => e.codigo === "6x2")).toBe(false);
+    expect(vigentesEm("2027-12-16").some((e) => e.codigo === "6x2")).toBe(false);
+  });
+
+  it("I6: a 6x2 que resta declara horasSemanaMedia coerente com o ciclo de 8 dias (38,5h, não 44h)", () => {
+    const seis = CATALOGO_INICIAL.filter((e) => e.codigo === "6x2");
+    expect(seis).toHaveLength(1);
+    const [entrada] = seis;
+    // 6 dias × horasDiaPadrao por ciclo de 8 dias, convertido para semana.
+    const esperado = (entrada.diasTrabalho * entrada.horasDiaPadrao * 7) / (entrada.diasTrabalho + entrada.diasFolga);
+    expect(entrada.horasSemanaMedia).toBeCloseTo(esperado, 1);
+  });
+
+  it("nenhum regime vigente pós-EC declara horasSemanaMedia acima da DURA jornada_max_semanal da mesma data", () => {
+    const teto = regraObrigatoria(regrasEm(POS_EC), "jornada_max_semanal").valor as number;
+    for (const entrada of vigentesEm(POS_EC)) {
+      expect(entrada.horasSemanaMedia, `${entrada.codigo} declara ${entrada.horasSemanaMedia}h contra teto de ${teto}h`).toBeLessThanOrEqual(teto);
+    }
+  });
+
+  it("I7: todo regime vigente com jornada diária acima da DURA jornada_max_diaria declara a exceção legal, com fundamento", () => {
+    const tetoDiario = regraObrigatoria(regrasEm(POS_EC), "jornada_max_diaria").valor as number;
+    for (const entrada of vigentesEm(POS_EC)) {
+      if (entrada.horasDiaPadrao <= tetoDiario) continue;
+      const excecao = (entrada.excecoesLegais ?? []).find((e) => e.chaveRegra === "jornada_max_diaria");
+      expect(excecao, `${entrada.codigo} tem ${entrada.horasDiaPadrao}h/dia contra teto de ${tetoDiario}h e NÃO declara exceção`).toBeDefined();
+      expect(excecao!.fundamento.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("I7: a 12x36 é a que carrega a exceção, fundamentada no art. 59-A da CLT", () => {
+    const doze = CATALOGO_INICIAL.find((e) => e.codigo === "12x36")!;
+    expect(doze.excecoesLegais).toEqual([
+      { chaveRegra: "jornada_max_diaria", fundamento: "CLT art. 59-A" },
+    ]);
+  });
+
+  it("I7: regime que obedece todas as DURAs não declara exceção nenhuma (exceção é pontual, não enfeite)", () => {
+    for (const entrada of CATALOGO_INICIAL.filter((e) => e.codigo !== "12x36")) {
+      expect(entrada.excecoesLegais ?? null, `${entrada.codigo} não deveria declarar exceção`).toBeNull();
+    }
+  });
+
+  it("toInsertCatalogo leva a exceção para o banco (e null quando não há)", () => {
+    const doze = CATALOGO_INICIAL.find((e) => e.codigo === "12x36")!;
+    expect(toInsertCatalogo(doze).excecoesLegais).toEqual(doze.excecoesLegais);
+    const cinco = CATALOGO_INICIAL.find((e) => e.codigo === "5x2")!;
+    expect(toInsertCatalogo(cinco).excecoesLegais).toBeNull();
+  });
+});

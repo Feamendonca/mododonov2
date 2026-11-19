@@ -44,6 +44,13 @@
  * numericamente válidos mas NÃO significam que o gerente configurou nada
  * — sem este sinal, o passo apareceria "Completo" numa loja virgem.
  *
+ * 🔴 R30 (I9 da review final) — e `configurado` também não basta: ele
+ * prova que existe uma LINHA, não que alguém confirmou o horário. Toda
+ * loja que já salvou encargos/meta de folha no modal antigo de
+ * Configurações de Pessoas tem linha, com 8h–23h herdados do DEFAULT da
+ * coluna. O passo 1 agora exige o carimbo `horarioConfirmadoEm`
+ * (migration 0035), gravado quando o gerente salva o horário AQUI.
+ *
  * O aviso de UF ausente (`avisoUfAusente`) é mostrado SEMPRE que presente,
  * independente do passo estar completo — engolir esse aviso seria repetir
  * o pior defeito deste plano (R13).
@@ -172,7 +179,18 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
       erros.forEach((erro) => toast.error(erro));
       return;
     }
-    salvarHorarioMut.mutate({ storeId, operationStartHour: s, operationEndHour: e });
+    // 🔴 R30 (I9 da review final): salvar pelo assistente É a confirmação do
+    // horário — `confirmarHorario: true` grava o carimbo
+    // `store_people_config.horarioConfirmadoEm` (migration 0035). Sem o
+    // carimbo o passo 1 continua pendente, mesmo com linha salva: existir
+    // linha não prova que alguém decidiu o horário (o modal antigo de
+    // Pessoas cria linha com 8h-23h de DEFAULT).
+    salvarHorarioMut.mutate({
+      storeId,
+      operationStartHour: s,
+      operationEndHour: e,
+      confirmarHorario: true,
+    });
   }
 
   // ── Passo 2: blocos de turno (reusa o CRUD existente) ───────────────────
@@ -221,6 +239,8 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
             // R23: só existe linha de verdade quando `configurado` vem
             // true — nunca inferir isso a partir dos valores numéricos.
             configurado: horarioQuery.data.configurado,
+            // R30: e existir linha ainda não é confirmação — o carimbo é.
+            horarioConfirmadoEm: horarioQuery.data.horarioConfirmadoEm,
           }
         : undefined,
     },

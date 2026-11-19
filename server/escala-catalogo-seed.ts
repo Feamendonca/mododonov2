@@ -27,9 +27,37 @@
  * seções "1. O marco legal" e "2. As três tabelas de parâmetro".
  */
 import type { InsertEscalaCatalogo, InsertRegraEscala } from "../drizzle/schema";
+// Import de VALOR (não `import type`) e, mesmo assim, sem ciclo em runtime:
+// `escala-regras.ts` importa daqui só com `import type`, que o TS apaga na
+// compilação. Normalizar UF em UM lugar só é regra deste módulo (Menor 11
+// da Task 4) — ver `toInsertRegra`.
+import { normalizarUf } from "./escala-regras";
 
 export type DriverFuncao = "tickets" | "pratos" | "cobertos";
 export type TipoRegra = "DURA" | "MOLE" | "DEPENDE_CCT";
+
+/**
+ * 🔴 R29 (I7 da review final) — marcador EXPLÍCITO de exceção legal.
+ *
+ * O catálogo contradizia as próprias regras: a 12x36 tem jornada de 12h/dia
+ * e o seed cadastra `jornada_max_diaria: 10` como DURA. Sem este campo, o
+ * motor do Plano 3 (que trata toda DURA como trava: viola → rejeita a
+ * solução) descartaria a 12x36 — um regime legítimo, amparado pelo art.
+ * 59-A da CLT — ou, pior, alguém "resolveria" afrouxando a DURA de 10h para
+ * todo mundo, que é como uma exceção pontual vira buraco geral.
+ *
+ * O marcador é por CHAVE DE REGRA (não um booleano genérico "é exceção"):
+ * diz exatamente QUAL trava este regime excepciona e com que fundamento —
+ * é isso que o motor precisa saber, e é isso que defende a escala numa
+ * reclamatória. Qualquer outra DURA continua valendo normalmente para o
+ * regime.
+ */
+export interface ExcecaoLegalEscala {
+  /** Chave da regra DURA excepcionada (ex.: "jornada_max_diaria"). */
+  chaveRegra: string;
+  /** Base legal da exceção (ex.: "CLT art. 59-A"). */
+  fundamento: string;
+}
 
 export interface EscalaCatalogoSeed {
   codigo: string;
@@ -43,6 +71,9 @@ export interface EscalaCatalogoSeed {
   exigeAcordoIndividual: boolean;
   exigeCCT: boolean;
   observacaoLegal: string;
+  /** R29: travas legais que ESTE regime excepciona, com fundamento. `null`
+   * (ou ausente) = nenhuma exceção — o regime obedece a todas as DURAs. */
+  excecoesLegais?: ExcecaoLegalEscala[] | null;
 }
 
 export interface RegraSeed {
@@ -59,11 +90,13 @@ export interface RegraSeed {
 
 // ─── escalas_catalogo — spec seção 2.2 ────────────────────────────────────────
 // Catálogo inicial (a validar com o trabalhista). 5x2 e 6x2 têm uma versão
-// por regime de jornada (44h legado · 42h EC 141 · 40h a partir de
-// 16/12/2027), igual ao que já fazíamos em regras_escala — ver nota acima.
+// por regime de jornada — hoje só a 5x2, depois que a 6x2 pós-EC saiu
+// (R29) —, igual ao que já fazíamos em regras_escala; ver nota acima.
 // 4x3 já é 40h, cabe em qualquer regime; 6x1 morre em 15/12/2026; 12x36
 // (art. 59-A) fecha em 15/12/2027 sem sucessora porque a própria lei ainda
 // não diz como adaptar um turno de 12h a um teto de 40h/semana.
+// R29 (review final): 6x2 também morre em 15/12/2026 — ciclo de 8 dias não
+// garante 2 repousos por semana CIVIL (ver a nota na entrada dela).
 export const CATALOGO_INICIAL: EscalaCatalogoSeed[] = [
   {
     codigo: "5x2",
@@ -144,49 +177,45 @@ export const CATALOGO_INICIAL: EscalaCatalogoSeed[] = [
     exigeAcordoIndividual: true,
     exigeCCT: false,
     observacaoLegal:
-      "Regime especial do art. 59-A da CLT; média de ~42h/semana. Sobrevive à EC 141/2026, mas encerra em 15/12/2027 sem sucessora cadastrada: ainda não há definição de como adaptar um turno de 12h ao teto de 40h/semana. Não inserir sucessora sem validação jurídica.",
+      "Regime especial do art. 59-A da CLT; média de ~42h/semana. A jornada de 12h é EXCEÇÃO EXPRESSA ao teto diário de 10h (ver excecoesLegais). Sobrevive à EC 141/2026, mas encerra em 15/12/2027 sem sucessora cadastrada: ainda não há definição de como adaptar um turno de 12h ao teto de 40h/semana. Não inserir sucessora sem validação jurídica.",
+    // R29: sem este marcador, o motor do Plano 3 rejeitaria a 12x36 por
+    // violar a DURA `jornada_max_diaria: 10` — ou alguém afrouxaria a DURA
+    // para todo mundo. A exceção é pontual, nominal e fundamentada.
+    excecoesLegais: [{ chaveRegra: "jornada_max_diaria", fundamento: "CLT art. 59-A" }],
   },
+  // 🔴 R29 (I6 da review final) — 6x2 SAI DO CATÁLOGO a partir de
+  // 16/12/2026, e por isso aqui há UMA entrada só (as duas sucessoras —
+  // 42h e 40h — foram removidas).
+  //
+  // Por quê: o ciclo de 8 dias não coincide com a semana civil, então ele
+  // NÃO garante 2 repousos em toda semana civil (exemplo: trabalha dias
+  // 1-6, folga 7-8; a semana civil formada pelos dias 1-7 tem UM repouso
+  // só). Isso viola frontalmente a DURA `repousos_por_semana: 2` que este
+  // mesmo arquivo cadastra a partir de 16/12/2026 — o catálogo estava
+  // contradizendo as próprias regras, e um regime ilegal oferecido pela
+  // tela é pior do que um regime legítimo a menos.
+  //
+  // Recuperável por UPDATE: se o trabalhista entender que a CCT da praça
+  // pode apurar os repousos pela média do ciclo, basta inserir a sucessora
+  // (com `exigeCCT: true`) — o módulo inteiro é parametrizado justamente
+  // para isso. Enquanto não houver essa validação, não é oferecido.
   {
     codigo: "6x2",
-    nome: "6x2 — 6 dias de trabalho, 2 de descanso (44h, regime anterior à EC 141)",
+    nome: "6x2 — 6 dias de trabalho, 2 de descanso (ciclo de 8 dias, até 15/12/2026)",
     diasTrabalho: 6,
     diasFolga: 2,
     horasDiaPadrao: 7.33, // 7h20
-    horasSemanaMedia: 44,
+    // I6: dizia 44h, que é o total por CICLO de 8 dias, não por semana.
+    // 6 × 7,33h = 44h a cada 8 dias ⇒ 44 ÷ 8 × 7 = 38,5h/semana. Esse
+    // número alimenta o "quadro mínimo" do motor (pessoas-hora ÷ jornada
+    // média): superestimá-lo em 14% encolhe o quadro na mesma proporção.
+    horasSemanaMedia: 38.5,
     vigenciaInicio: null,
     vigenciaFim: "2026-12-15",
     exigeAcordoIndividual: false,
     exigeCCT: true,
     observacaoLegal:
-      "Regime anterior à EC 141/2026. Ciclo de 8 dias (não coincide com a semana civil); por isso recomenda-se amparo de CCT.",
-  },
-  {
-    codigo: "6x2",
-    nome: "6x2 — 6 dias de trabalho, 2 de descanso (ciclo de 8 dias)",
-    diasTrabalho: 6,
-    diasFolga: 2,
-    horasDiaPadrao: 7,
-    horasSemanaMedia: 42,
-    vigenciaInicio: "2026-12-16",
-    vigenciaFim: "2027-12-15",
-    exigeAcordoIndividual: false,
-    exigeCCT: true,
-    observacaoLegal:
-      "Ciclo de 8 dias (não coincide com a semana civil); 42h/semana em média. Por isso recomenda-se amparo de CCT.",
-  },
-  {
-    codigo: "6x2",
-    nome: "6x2 — 6 dias de trabalho, 2 de descanso (40h, a partir de 16/12/2027)",
-    diasTrabalho: 6,
-    diasFolga: 2,
-    horasDiaPadrao: 6.67, // 6h40
-    horasSemanaMedia: 40,
-    vigenciaInicio: "2027-12-16",
-    vigenciaFim: null,
-    exigeAcordoIndividual: false,
-    exigeCCT: true,
-    observacaoLegal:
-      "Teto cai para 40h/semana a partir de 16/12/2027 (EC 141/2026). Ciclo de 8 dias; recomenda-se amparo de CCT.",
+      "Regime anterior à EC 141/2026. Ciclo de 8 dias (não coincide com a semana civil), por isso recomenda-se amparo de CCT. ENCERRA em 15/12/2026: a partir de 16/12/2026 a EC 141/2026 exige 2 repousos por SEMANA CIVIL, e um ciclo de 8 dias não garante isso em toda semana. Sucessora só com validação jurídica (CCT que autorize apuração por ciclo).",
   },
 ];
 
@@ -357,6 +386,7 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
 // quem grava no banco usa este mapper, nunca o literal cru.
 export function toInsertCatalogo(seed: EscalaCatalogoSeed): InsertEscalaCatalogo {
   return {
+    excecoesLegais: seed.excecoesLegais ?? null,
     codigo: seed.codigo,
     nome: seed.nome,
     diasTrabalho: seed.diasTrabalho,
@@ -371,10 +401,19 @@ export function toInsertCatalogo(seed: EscalaCatalogoSeed): InsertEscalaCatalogo
   };
 }
 
+/**
+ * 🔴 I5 (review final): a UF é NORMALIZADA na escrita (maiúsculas, sem
+ * espaços). O outro lado — a query de candidatas (`getRegras`, via
+ * `condicaoRegrasCandidatas`) — compara com `upper(trim(...))`. Os dois
+ * lados precisam concordar: uma regra gravada "sp" que não casa com a loja
+ * "SP" não dá erro nenhum, só devolve MENOS regra estadual — e, como a
+ * loja tem UF, nem o `avisoUfAusente` aparece. Falha silenciosa é
+ * exatamente o que este módulo existe para não produzir.
+ */
 export function toInsertRegra(seed: RegraSeed): InsertRegraEscala {
   return {
     storeId: seed.storeId,
-    uf: seed.uf,
+    uf: normalizarUf(seed.uf),
     cct: seed.cct,
     chave: seed.chave,
     valor: seed.valor,

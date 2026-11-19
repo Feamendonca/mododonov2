@@ -42,6 +42,17 @@ export const adminRouter = router({
       budgetPayrollPct: z.string().optional(),
       payrollTargetPct: z.string().optional(),
       operationType: z.enum(["aeroporto", "mall", "rua", "corporativo", "universitario"]).optional(),
+      // R31: mesma validação de `updateStore`. Sem isto, a UF digitada na
+      // criação da loja seria descartada em silêncio pelo zod (objeto não
+      // estrito remove chave desconhecida) e o gerente só descobriria o
+      // sumiço quando o módulo de Escala avisasse que a loja não tem UF.
+      uf: z
+        .string()
+        .trim()
+        .toUpperCase()
+        .regex(/^[A-Z]{2}$/, "UF deve ser a sigla de 2 letras do estado (ex.: SP, RS).")
+        .optional()
+        .nullable(),
     }))
     .mutation(async ({ input }) => {
       const id = await createStore({
@@ -55,6 +66,7 @@ export const adminRouter = router({
         budgetTaxesPct: input.budgetTaxesPct ?? null,
         budgetFixedCosts: input.budgetFixedCosts ?? null,
         operationType: input.operationType ?? "rua",
+        uf: input.uf ?? null,
       });
       return { id };
     }),
@@ -75,6 +87,21 @@ export const adminRouter = router({
       operationType: z.enum(["aeroporto", "mall", "rua", "corporativo", "universitario"]).optional(),
       googlePlaceId: z.string().optional().nullable(),
       segmento: z.string().max(50).optional().nullable(),
+      // R31 (I4 da review final): `stores.uf` existia no schema (migration
+      // 0033) e era usada pelo módulo de Escala para resolver regras de
+      // escopo estadual — mas NÃO tinha caminho de escrita nenhum: nem
+      // tela, nem procedure. As 39 lojas ficariam NULL para sempre, o ramo
+      // de UF seria código morto e `avisoUfAusente` um aviso permanente.
+      // 2 letras MAIÚSCULAS: a normalização entra aqui, na borda, porque
+      // "sp" gravado minúsculo não casa com a regra estadual na query
+      // (`getRegras`) — e, como a loja TEM uf, nem o aviso aparece (I5).
+      uf: z
+        .string()
+        .trim()
+        .toUpperCase()
+        .regex(/^[A-Z]{2}$/, "UF deve ser a sigla de 2 letras do estado (ex.: SP, RS).")
+        .optional()
+        .nullable(),
     }))
     .mutation(async ({ input }) => {
       const { id, ...data } = input;

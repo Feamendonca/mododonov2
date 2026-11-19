@@ -216,8 +216,28 @@ export interface HorarioFuncionamento {
    * entre "ninguém configurou" e "configurou e bateu com o default por
    * coincidência" — por isso a completude do passo nunca pode depender só
    * deles.
+   *
+   * ⚠️ Continua necessário, mas NÃO é mais suficiente — ver
+   * `horarioConfirmadoEm` abaixo (R30).
    */
   configurado: boolean;
+  /**
+   * 🔴 R30 (I9 da review final) — carimbo de QUANDO o gerente confirmou o
+   * horário pelo assistente (`store_people_config.horarioConfirmadoEm`,
+   * migration 0035). `null` = nunca confirmou.
+   *
+   * `configurado` prova que existe uma LINHA, não que alguém decidiu o
+   * horário: toda loja que já salvou encargos/meta de folha no modal
+   * antigo de Configurações de Pessoas tem linha — e entraria aqui com o
+   * passo 1 verde e 8h-23h herdados do DEFAULT da coluna, que ninguém
+   * escolheu. O carimbo é o único sinal de confirmação de verdade.
+   *
+   * Tipo frouxo (`string | Date`) de propósito: a procedure devolve o que
+   * o driver entregar (o shim raw do `pg` pode dar `Date`, a serialização
+   * pode dar `string`) — o que importa aqui é SER ou NÃO ser nulo, nunca o
+   * formato.
+   */
+  horarioConfirmadoEm: string | Date | null;
 }
 
 export interface BlocoTurno {
@@ -259,7 +279,7 @@ function avaliarHorario(estado: QueryEstado<HorarioFuncionamento>): AvaliacaoPas
       avisoExtra: null,
     };
   }
-  const { operationStartHour, operationEndHour, configurado } = estado.data;
+  const { operationStartHour, operationEndHour, configurado, horarioConfirmadoEm } = estado.data;
   const valoresValidos =
     Number.isFinite(operationStartHour) &&
     Number.isFinite(operationEndHour) &&
@@ -284,6 +304,19 @@ function avaliarHorario(estado: QueryEstado<HorarioFuncionamento>): AvaliacaoPas
       titulo,
       completo: false,
       razao: `Esta loja ainda não confirmou o horário de funcionamento — os valores mostrados (${operationStartHour}h–${operationEndHour}h) são o padrão do sistema, não uma configuração salva. Ajuste se necessário e salve.`,
+      avisoExtra: null,
+    };
+  }
+  // 🔴 R30 (I9): existir linha ≠ o gerente ter confirmado. Uma loja que só
+  // mexeu em encargos/meta de folha pelo modal antigo tem `configurado:
+  // true` com 8h-23h de DEFAULT — e apareceria aqui como "Completo" sem
+  // ninguém ter decidido nada. Só o carimbo serve como prova.
+  if (horarioConfirmadoEm == null) {
+    return {
+      passo: "horario",
+      titulo,
+      completo: false,
+      razao: `Esta loja tem configuração de Pessoas salva, mas ninguém confirmou o horário de funcionamento aqui (${operationStartHour}h–${operationEndHour}h pode ser só o padrão do sistema). Confira os dois valores e clique em "Salvar horário" para confirmar.`,
       avisoExtra: null,
     };
   }

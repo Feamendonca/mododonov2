@@ -13,7 +13,7 @@
  * UF da loja com a resolução por data é orquestração de procedure, não
  * acesso a dado — fica em `server/routers/escala.ts`.
  */
-import { and, eq, gte, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, getDailyEntries } from "./db";
 import {
   funcoesLoja,
@@ -31,7 +31,8 @@ import {
   type ResultadoProdutividadeHistorica,
 } from "./escala-produtividade";
 import { REGRAS_LEGAIS_INICIAIS } from "./escala-catalogo-seed";
-import type { DriverFuncao, RegraSeed, TipoRegra } from "./escala-catalogo-seed";
+import { normalizarUf } from "./escala-regras";
+import type { DriverFuncao, ExcecaoLegalEscala, RegraSeed, TipoRegra } from "./escala-catalogo-seed";
 
 // ─── Funções da loja (funcoes_loja) ───────────────────────────────────────────
 
@@ -176,24 +177,43 @@ function toRegraSeed(row: RegraEscalaRow): RegraSeed {
 }
 
 /**
- * Candidatas a resolução para `storeId`/`uf`: regras de rede (storeId e uf
- * nulos), regras de UF (storeId nulo, uf = a da loja) e regras de loja
- * (storeId = storeId). `uf` já deve chegar normalizado (maiúsculo, sem
- * espaços) — normalizar é responsabilidade de quem monta o contexto
- * (server/routers/escala.ts), não desta query.
+ * Condição SQL das regras candidatas à resolução para `storeId`/`uf`:
+ * regras de rede (storeId e uf nulos), regras de UF (storeId nulo, uf = a
+ * da loja) e regras de loja (storeId = storeId).
+ *
+ * 🔴 I5 (review final) — COMPARAÇÃO DE UF É CASE-INSENSITIVE DOS DOIS
+ * LADOS. A versão anterior fazia `eq(regrasEscala.uf, uf)`, comparação
+ * exata: uma regra gravada como "sp" (ou " SP") simplesmente NÃO entrava
+ * nas candidatas. E o estrago era silencioso por construção — como a loja
+ * TEM uf, `avisoUfAusente` é `false` e nada na tela indica que as regras
+ * estaduais sumiram. O resolvedor (`escala-regras.ts`) normaliza os dois
+ * lados; a query precisa normalizar igual, senão a regra nem chega nele.
+ * Por isso: `uf` do contexto passa por `normalizarUf` (mesma função do
+ * resolvedor — implementação ÚNICA, Menor 11 da Task 4) e a coluna entra
+ * em `upper()` na comparação. O `trim()` cobre linha gravada com espaço.
+ *
+ * Função separada e exportada para ser testável sem banco (o SQL gerado é
+ * verificável com o QueryBuilder do drizzle) — ver escala-uf-case.test.ts.
  *
  * `uf === null` (loja sem UF cadastrada, R13) busca só rede + loja — as
  * regras de escopo UF nunca entram como candidatas, então não há como uma
  * delas "escapar" por engano na resolução.
  */
+export function condicaoRegrasCandidatas(storeId: number, uf: string | null) {
+  const redeOuLoja = or(isNull(regrasEscala.storeId), eq(regrasEscala.storeId, storeId));
+  const ufNormalizada = normalizarUf(uf);
+  return ufNormalizada
+    ? and(
+        redeOuLoja,
+        or(isNull(regrasEscala.uf), sql`upper(trim(${regrasEscala.uf})) = ${ufNormalizada}`)
+      )
+    : and(redeOuLoja, isNull(regrasEscala.uf));
+}
+
 export async function getRegras(storeId: number, uf: string | null): Promise<RegraSeed[]> {
   const db = await getDb();
   if (!db) return [];
-  const redeOuLoja = or(isNull(regrasEscala.storeId), eq(regrasEscala.storeId, storeId));
-  const condition = uf
-    ? and(redeOuLoja, or(isNull(regrasEscala.uf), eq(regrasEscala.uf, uf)))
-    : and(redeOuLoja, isNull(regrasEscala.uf));
-  const rows = await db.select().from(regrasEscala).where(condition);
+  const rows = await db.select().from(regrasEscala).where(condicaoRegrasCandidatas(storeId, uf));
   return rows.map(toRegraSeed);
 }
 
@@ -369,6 +389,11 @@ export type EscalaCatalogo = {
   exigeAcordoIndividual: boolean;
   exigeCCT: boolean;
   observacaoLegal: string | null;
+  /** R29: travas legais que este regime excepciona (ex.: a 12x36
+   * excepciona `jornada_max_diaria` pelo art. 59-A da CLT). `null` =
+   * nenhuma. O motor do Plano 3 lê isto antes de rejeitar um regime por
+   * violação de DURA. Migration 0036. */
+  excecoesLegais: ExcecaoLegalEscala[] | null;
 };
 
 function toEscalaCatalogo(row: EscalaCatalogoRow): EscalaCatalogo {
@@ -385,6 +410,7 @@ function toEscalaCatalogo(row: EscalaCatalogoRow): EscalaCatalogo {
     exigeAcordoIndividual: row.exigeAcordoIndividual,
     exigeCCT: row.exigeCCT,
     observacaoLegal: row.observacaoLegal,
+    excecoesLegais: (row.excecoesLegais as ExcecaoLegalEscala[] | null) ?? null,
   };
 }
 

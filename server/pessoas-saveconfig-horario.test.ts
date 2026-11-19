@@ -67,13 +67,56 @@ describe("pessoas.saveConfig — I1: fechamento precisa ser depois da abertura",
     await expect(caller.saveConfig({ storeId: 1, chargesPercent: 65 })).resolves.toEqual({ success: true });
   });
 
-  it("aceita atualização parcial que toca só operationStartHour, sem operationEndHour — não há o que comparar", async () => {
+  // 🔴 I8 (review final) — ESTES DOIS TESTES FORAM INVERTIDOS.
+  // Eles afirmavam que uma atualização parcial de UM dos dois horários é
+  // aceita porque "não há o que comparar". Era o furo: o `.refine` cruzado
+  // não cobria update parcial, e `upsertStorePeopleConfig` grava parcial —
+  // mandar só `operationEndHour: 5` numa loja que abre às 8h persistia um
+  // horário inválido sem passar por validação nenhuma. Agora quem mexe em
+  // horário manda o PAR, e a comparação cruzada sempre tem os dois lados.
+  it("I8: rejeita atualização parcial com só operationStartHour (sem o par, não há como validar)", async () => {
     const caller = pessoasRouter.createCaller(makeCtxAdmin());
-    await expect(caller.saveConfig({ storeId: 1, operationStartHour: 9 })).resolves.toEqual({ success: true });
+    await expect(caller.saveConfig({ storeId: 1, operationStartHour: 9 })).rejects.toThrow();
   });
 
-  it("aceita atualização parcial que toca só operationEndHour, sem operationStartHour — não há o que comparar", async () => {
+  it("I8: rejeita atualização parcial com só operationEndHour — era o caso que persistia fechamento antes da abertura", async () => {
     const caller = pessoasRouter.createCaller(makeCtxAdmin());
-    await expect(caller.saveConfig({ storeId: 1, operationEndHour: 20 })).resolves.toEqual({ success: true });
+    await expect(caller.saveConfig({ storeId: 1, operationEndHour: 5 })).rejects.toThrow();
+  });
+
+  it("I8: continua aceitando atualização que não toca em horário nenhum (os outros campos seguem parciais)", async () => {
+    const caller = pessoasRouter.createCaller(makeCtxAdmin());
+    await expect(
+      caller.saveConfig({ storeId: 1, chargesPercent: 65, productivityTarget: 210 })
+    ).resolves.toEqual({ success: true });
+  });
+
+  // ─── R30 (I9): carimbo de confirmação do horário ──────────────────────────
+
+  it("R30: aceita confirmarHorario junto dos dois horários (é assim que o assistente confirma)", async () => {
+    const caller = pessoasRouter.createCaller(makeCtxAdmin());
+    await expect(
+      caller.saveConfig({ storeId: 1, operationStartHour: 8, operationEndHour: 23, confirmarHorario: true })
+    ).resolves.toEqual({ success: true });
+  });
+
+  it("R30: rejeita confirmarHorario sem os horários — carimbo é sobre um horário concreto", async () => {
+    const caller = pessoasRouter.createCaller(makeCtxAdmin());
+    await expect(caller.saveConfig({ storeId: 1, confirmarHorario: true })).rejects.toThrow();
+  });
+
+  it("R30: o modal antigo (sem confirmarHorario) continua funcionando e não carimba nada", async () => {
+    const caller = pessoasRouter.createCaller(makeCtxAdmin());
+    await expect(
+      caller.saveConfig({
+        storeId: 1,
+        chargesPercent: 70,
+        productivityTarget: 200,
+        payrollTargetPercent: 18,
+        hiringCost: 1500,
+        operationStartHour: 8,
+        operationEndHour: 23,
+      })
+    ).resolves.toEqual({ success: true });
   });
 });

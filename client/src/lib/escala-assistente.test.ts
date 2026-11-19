@@ -44,7 +44,16 @@ function regraRede(overrides: Partial<RegraResolvidaLike> = {}): RegraResolvidaL
 
 function estadoCompleto(): EstadoAssistente {
   return {
-    horario: { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: true } },
+    horario: {
+      isLoading: false,
+      // R30: completo exige configurado=true E o carimbo de confirmação.
+      data: {
+        operationStartHour: 8,
+        operationEndHour: 23,
+        configurado: true,
+        horarioConfirmadoEm: "2026-11-19T12:00:00.000Z",
+      },
+    },
     blocos: { isLoading: false, data: [{ id: 1 }, { id: 2 }] },
     funcoes: { isLoading: false, data: [{ id: 1 }] },
     regras: {
@@ -171,7 +180,10 @@ describe("avaliarPassos", () => {
 
   it("marca horário como incompleto quando fechamento não é depois da abertura", () => {
     const estado = estadoCompleto();
-    estado.horario = { isLoading: false, data: { operationStartHour: 10, operationEndHour: 10, configurado: true } };
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 10, operationEndHour: 10, configurado: true, horarioConfirmadoEm: "2026-11-19T12:00:00.000Z" },
+    };
     const [horario] = avaliarPassos(estado);
     expect(horario.completo).toBe(false);
   });
@@ -180,7 +192,10 @@ describe("avaliarPassos", () => {
   // configuração.
   it("R23: marca horário como INCOMPLETO quando configurado=false, mesmo com valores numéricos válidos (defaults do servidor)", () => {
     const estado = estadoCompleto();
-    estado.horario = { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: false } };
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 8, operationEndHour: 23, configurado: false, horarioConfirmadoEm: null },
+    };
     const [horario] = avaliarPassos(estado);
     expect(horario.completo).toBe(false);
     expect(horario.razao).toMatch(/ainda não confirmou|padrão/i);
@@ -188,7 +203,10 @@ describe("avaliarPassos", () => {
 
   it("R23: marca horário como COMPLETO quando configurado=true e os valores são válidos", () => {
     const estado = estadoCompleto();
-    estado.horario = { isLoading: false, data: { operationStartHour: 7, operationEndHour: 22, configurado: true } };
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 7, operationEndHour: 22, configurado: true, horarioConfirmadoEm: "2026-11-19T12:00:00.000Z" },
+    };
     const [horario] = avaliarPassos(estado);
     expect(horario.completo).toBe(true);
   });
@@ -351,7 +369,10 @@ describe("podeGerarEscala", () => {
 
   it("R23: não libera com o horário usando defaults não confirmados (configurado=false)", () => {
     const estado = estadoCompleto();
-    estado.horario = { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: false } };
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 8, operationEndHour: 23, configurado: false, horarioConfirmadoEm: null },
+    };
     expect(podeGerarEscala(avaliarPassos(estado))).toBe(false);
   });
 });
@@ -487,5 +508,79 @@ describe("avaliarPassos — R28: catálogo legal vazio nunca conta como revisado
     const [, , , regras] = avaliarPassos(estadoCompleto());
     expect(regras.completo).toBe(true);
     expect(regras.razao).toMatch(/foram revisadas/i);
+  });
+});
+
+// ─── 🔴 R30 (I9 da review final): `configurado` ≠ confirmação do gerente ─────
+//
+// `configurado` prova que existe uma LINHA em `store_people_config`. Toda
+// loja que já salvou encargos/meta de folha no modal antigo de Pessoas tem
+// linha — e entrava no assistente com o passo 1 verde e 8h-23h herdados do
+// DEFAULT da coluna, que ninguém decidiu. Só o carimbo
+// `horarioConfirmadoEm` (migration 0035) é prova de confirmação.
+
+describe("avaliarPassos — R30: passo 1 exige o carimbo de confirmação, não só a linha", () => {
+  it("configurado=true SEM carimbo → INCOMPLETO (loja que só mexeu em encargos pelo modal antigo)", () => {
+    const estado = estadoCompleto();
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 8, operationEndHour: 23, configurado: true, horarioConfirmadoEm: null },
+    };
+    const [horario] = avaliarPassos(estado);
+    expect(horario.completo).toBe(false);
+    expect(horario.razao).toMatch(/ninguém confirmou o horário/i);
+  });
+
+  it("configurado=true SEM carimbo → 'Gerar escala' continua bloqueado", () => {
+    const estado = estadoCompleto();
+    estado.horario = {
+      isLoading: false,
+      data: { operationStartHour: 8, operationEndHour: 23, configurado: true, horarioConfirmadoEm: null },
+    };
+    expect(podeGerarEscala(avaliarPassos(estado))).toBe(false);
+  });
+
+  it("com carimbo (string ISO) e valores válidos → COMPLETO", () => {
+    const estado = estadoCompleto();
+    estado.horario = {
+      isLoading: false,
+      data: {
+        operationStartHour: 9,
+        operationEndHour: 22,
+        configurado: true,
+        horarioConfirmadoEm: "2026-11-19T10:30:00.000Z",
+      },
+    };
+    expect(avaliarPassos(estado)[0].completo).toBe(true);
+  });
+
+  it("com carimbo em objeto Date (o driver pode devolver Date, não string) → COMPLETO", () => {
+    const estado = estadoCompleto();
+    estado.horario = {
+      isLoading: false,
+      data: {
+        operationStartHour: 9,
+        operationEndHour: 22,
+        configurado: true,
+        horarioConfirmadoEm: new Date("2026-11-19T10:30:00.000Z"),
+      },
+    };
+    expect(avaliarPassos(estado)[0].completo).toBe(true);
+  });
+
+  it("carimbo presente NÃO salva horário numericamente inválido — a validação de valor vem primeiro", () => {
+    const estado = estadoCompleto();
+    estado.horario = {
+      isLoading: false,
+      data: {
+        operationStartHour: 20,
+        operationEndHour: 8,
+        configurado: true,
+        horarioConfirmadoEm: "2026-11-19T10:30:00.000Z",
+      },
+    };
+    const [horario] = avaliarPassos(estado);
+    expect(horario.completo).toBe(false);
+    expect(horario.razao).toMatch(/depois da abertura/i);
   });
 });

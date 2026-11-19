@@ -102,6 +102,11 @@ export type StorePeopleConfig = {
   hiringCost: number;
   operationStartHour: number;
   operationEndHour: number;
+  /** R30 (migration 0035): quando o gerente confirmou o horário de
+   * funcionamento pelo assistente de Escala. `null`/ausente = nunca
+   * confirmou (os horários são o default do sistema, não uma decisão).
+   * Opcional no tipo porque a coluna só existe depois da 0035. */
+  horarioConfirmadoEm?: Date | string | null;
 };
 
 // ─── Cost Calculation ─────────────────────────────────────────────────────────
