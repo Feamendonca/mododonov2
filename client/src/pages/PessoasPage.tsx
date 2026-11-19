@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { ClipboardPaste } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { ConfiguracaoFuncoes } from "@/components/escala/ConfiguracaoFuncoes";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1390,7 +1391,7 @@ function Movimentacoes({ storeId, config }: { storeId: number; config: any }) {
 
 // ─── Main PessoasPage ─────────────────────────────────────────────────────────
 
-type SubTab = "mapa" | "quadro" | "escala" | "analise" | "movimentacoes";
+type SubTab = "mapa" | "quadro" | "escala" | "configuracao-escala" | "analise" | "movimentacoes";
 
 export default function PessoasPage() {
   const { storeId: ctxStoreId } = useStore();
@@ -1426,6 +1427,7 @@ export default function PessoasPage() {
     { id: "mapa", label: "Mapa de Calor" },
     { id: "quadro", label: "Quadro" },
     { id: "escala", label: "Escala" },
+    { id: "configuracao-escala", label: "Configuração da Escala" },
     { id: "analise", label: "Análise" },
     { id: "movimentacoes", label: "Movimentações" },
   ];
@@ -1473,6 +1475,7 @@ export default function PessoasPage() {
       {activeTab === "mapa" && <MapaCalor storeId={storeId} config={config} />}
       {activeTab === "quadro" && <Quadro storeId={storeId} config={config} />}
       {activeTab === "escala" && <Escala storeId={storeId} config={config} />}
+      {activeTab === "configuracao-escala" && <ConfiguracaoFuncoes storeId={storeId} />}
       {activeTab === "analise" && <Analise storeId={storeId} config={config} />}
       {activeTab === "movimentacoes" && <Movimentacoes storeId={storeId} config={config} />}
 
