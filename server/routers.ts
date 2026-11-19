@@ -19,6 +19,7 @@ import { calcCMVWindows, calcMonthAccumulated, calcConsistencyScore } from "../s
 import { notaResultado, notaRampa, notaCmv, notaQualidade, notaTotal, DEFAULT_CONFIG } from "../shared/engine";
 import { cmvRouter } from "./routers/cmv";
 import { pessoasRouter } from "./routers/pessoas";
+import { escalaRouter } from "./routers/escala";
 import { adminRouter } from "./routers/admin";
 import { experienciaRouter } from "./routers/experiencia";
 import { preturnoRouter } from "./routers/preturno";
@@ -929,6 +930,7 @@ export const appRouter = router({
   // ─── CMV Advanced Module ──────────────────────────────────────────────────
   cmv: cmvRouter,
   pessoas: pessoasRouter,
+  escala: escalaRouter,
   admin: adminRouter,
   experiencia: experienciaRouter,
   preturno: preturnoRouter,

@@ -1,0 +1,16 @@
+-- Migration 0033: adiciona `uf` (UF da loja) a `stores`.
+-- Postgres/Supabase. Idempotente. Coluna minúscula sem aspas (mesma
+-- convenção de `regras_escala.uf`, migration 0032).
+--
+-- R13 (.superpowers/sdd/2026-11-19-escala-configuracao/progress.md):
+-- `getRegras(storeId, uf)` precisa da UF estruturada da loja para resolver
+-- regras de escopo estadual; `stores.location` é texto livre e não serve
+-- como fonte — é assim que nasceria "sp" vs "SP" (mesma classe de bug do
+-- achado I4 da Task 2).
+--
+-- NULLABLE de propósito: não há acesso ao banco neste ambiente para fazer o
+-- backfill das 39 lojas existentes. Loja com `uf` NULL não quebra a
+-- resolução — só limita o escopo a regras de rede, e `getRegrasVigentes`
+-- (server/routers/escala.ts) devolve um aviso explícito desse caso, nunca
+-- silencioso.
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS uf VARCHAR(2);

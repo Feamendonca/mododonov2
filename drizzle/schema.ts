@@ -82,6 +82,16 @@ export const stores = pgTable("stores", {
   dreSharepointUrl: text("dreSharepointUrl"),
   /** Filtro de nome de arquivo (ex.: "Praça") pra desambiguar sub-unidades na mesma pasta. Migration 0030. */
   dreFileFilter: varchar("dreFileFilter", { length: 120 }),
+  /**
+   * UF da loja (sigla de 2 letras), usada pelo módulo de Escala para resolver
+   * regras de escopo estadual (`getRegras`/`resolverRegras`). NULLABLE de
+   * propósito: não há acesso ao banco para fazer o backfill das 39 lojas
+   * existentes — ver R13, .superpowers/sdd/2026-11-19-escala-configuracao/
+   * progress.md. Loja sem `uf` só recebe regras de escopo rede; a ausência
+   * é sinalizada explicitamente por `getRegrasVigentes`, nunca absorvida em
+   * silêncio. Migration 0033.
+   */
+  uf: varchar("uf", { length: 2 }),
 });
 
 export type Store = typeof stores.$inferSelect;
