@@ -957,6 +957,7 @@ export const funcoesLoja = pgTable("funcoes_loja", {
   updatedAt: timestamp("updatedAt").defaultNow(),
 }, (t) => ({
   idxFuncoesLojaStoreAtivo: index("idx_funcoes_loja_store_ativo").on(t.storeId, t.ativo),
+  uqFuncoesLojaStoreNome: uniqueIndex("uq_funcoes_loja_store_nome").on(t.storeId, t.nome),
 }));
 export type FuncaoLojaRow = typeof funcoesLoja.$inferSelect;
 export type InsertFuncaoLoja = typeof funcoesLoja.$inferInsert;
@@ -977,7 +978,12 @@ export const escalasCatalogo = pgTable("escalas_catalogo", {
   exigeAcordoIndividual: boolean("exigeAcordoIndividual").notNull().default(false),
   exigeCCT: boolean("exigeCCT").notNull().default(false),
   observacaoLegal: text("observacaoLegal"),
-});
+}, (t) => ({
+  uqEscalasCatalogoCodigoVigencia: uniqueIndex("uq_escalas_catalogo_codigo_vigencia").on(
+    t.codigo,
+    t.vigenciaInicio,
+  ),
+}));
 export type EscalaCatalogoRow = typeof escalasCatalogo.$inferSelect;
 export type InsertEscalaCatalogo = typeof escalasCatalogo.$inferInsert;
 
@@ -996,7 +1002,7 @@ export const regrasEscala = pgTable("regras_escala", {
   vigenciaFim: date("vigenciaFim"),
   fonte: text("fonte").notNull(),
 }, (t) => ({
-  idxRegrasEscalaStoreChaveVigencia: index("idx_regras_escala_store_chave_vigencia").on(
+  uqRegrasEscalaStoreChaveVigencia: uniqueIndex("uq_regras_escala_store_chave_vigencia").on(
     t.storeId,
     t.chave,
     t.vigenciaInicio,

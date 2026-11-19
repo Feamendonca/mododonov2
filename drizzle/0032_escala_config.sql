@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS funcoes_loja (
 CREATE INDEX IF NOT EXISTS idx_funcoes_loja_store_ativo
   ON funcoes_loja ("storeId", ativo);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_funcoes_loja_store_nome
+  ON funcoes_loja ("storeId", nome);
+
 -- ─── escalas_catalogo ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS escalas_catalogo (
   id SERIAL PRIMARY KEY,
@@ -62,6 +65,9 @@ CREATE TABLE IF NOT EXISTS escalas_catalogo (
   "observacaoLegal" TEXT
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_escalas_catalogo_codigo_vigencia
+  ON escalas_catalogo (codigo, "vigenciaInicio");
+
 -- ─── regras_escala ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS regras_escala (
   id SERIAL PRIMARY KEY,
@@ -76,5 +82,5 @@ CREATE TABLE IF NOT EXISTS regras_escala (
   fonte TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_regras_escala_store_chave_vigencia
+CREATE UNIQUE INDEX IF NOT EXISTS uq_regras_escala_store_chave_vigencia
   ON regras_escala ("storeId", chave, "vigenciaInicio");
