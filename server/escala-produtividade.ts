@@ -31,9 +31,52 @@ export interface ResultadoProdutividadeHistorica {
   amostras: number;
 }
 
+/**
+ * Lançado quando uma amostra traz `atendimentos` ou `pessoasHora` negativo.
+ * Um número negativo nunca é um dado de negócio legítimo (não existe
+ * atendimento ou pessoa-hora negativa) — é sinal de bug na coleta (Task 4).
+ * Propositalmente um erro, não absorvido em silêncio pelos filtros `> 0`:
+ * um negativo silenciosamente tratado como "dia fechado"/"sem escala"
+ * torceria a régua de produtividade sem ninguém notar (mesma classe de
+ * defeito que `FormatoDataInvalidoError` evita em escala-regras.ts).
+ * Zero continua válido — zero É o sinal correto de "dia fechado"/"sem
+ * escala", não aciona este erro.
+ */
+export class AmostraInvalidaError extends Error {
+  readonly campo: "atendimentos" | "pessoasHora";
+  readonly valor: number;
+  readonly indice: number;
+
+  constructor(campo: "atendimentos" | "pessoasHora", valor: number, indice: number) {
+    super(
+      `Amostra inválida no índice ${indice}: "${campo}" não pode ser negativo (valor recebido: ${valor}).`,
+    );
+    this.name = "AmostraInvalidaError";
+    this.campo = campo;
+    this.valor = valor;
+    this.indice = indice;
+  }
+}
+
+function validarAmostras(amostras: AmostraProdutividade[]): void {
+  for (let indice = 0; indice < amostras.length; indice++) {
+    const amostra = amostras[indice];
+    if (amostra.atendimentos < 0) {
+      throw new AmostraInvalidaError("atendimentos", amostra.atendimentos, indice);
+    }
+    if (amostra.pessoasHora < 0) {
+      throw new AmostraInvalidaError("pessoasHora", amostra.pessoasHora, indice);
+    }
+  }
+}
+
 export function calcularProdutividadeHistorica(
   amostras: AmostraProdutividade[],
 ): ResultadoProdutividadeHistorica {
+  // Valida ANTES de qualquer filtro: um negativo não pode ser absorvido
+  // silenciosamente pelos filtros `> 0` abaixo (ver AmostraInvalidaError).
+  validarAmostras(amostras);
+
   // Dias com atendimentos zerados são descartados (loja fechada, feriado) —
   // não é produtividade zero, é ausência de operação naquele dia.
   const diasComOperacao = amostras.filter((a) => a.atendimentos > 0);

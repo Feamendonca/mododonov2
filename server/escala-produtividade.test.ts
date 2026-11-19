@@ -13,9 +13,18 @@
  * conjuntos em que média e mediana DIVERGEM, para que o teste rejeite uma
  * implementação que calcule média. Também cobrem número par e ímpar de
  * amostras, e os testes de guarda verificam o `motivo`, não só `valor`.
+ *
+ * R11 (pós-revisão): amostras com `atendimentos`/`pessoasHora` negativo
+ * lançam `AmostraInvalidaError` em vez de serem absorvidas em silêncio
+ * pelos filtros `> 0` — mesma convenção de erro customizado que
+ * `FormatoDataInvalidoError` estabeleceu na Task 2. Zero continua válido.
+ *
+ * R12 (pós-revisão): array vazio e "todos os dias fechados" caem,
+ * deliberadamente, em "amostra insuficiente" (não em "sem escala") —
+ * fixado por teste para não derivar no próximo refactor.
  */
 import { describe, expect, it } from "vitest";
-import { calcularProdutividadeHistorica } from "./escala-produtividade";
+import { AmostraInvalidaError, calcularProdutividadeHistorica } from "./escala-produtividade";
 
 function amostra(atendimentos: number, pessoasHora: number) {
   return { atendimentos, pessoasHora };
@@ -178,5 +187,94 @@ describe("calcularProdutividadeHistorica — descarte de dias com atendimentos z
     expect(r.valor).toBeNull();
     expect(r.amostras).toBe(4);
     expect(r.motivo).toMatch(/insuficiente|m[ií]nimo|5 dias/i);
+  });
+
+  it("R12: todos os dias fechados (atendimentos zerados) cai em amostra insuficiente, não em sem escala", () => {
+    // Zona cinzenta decidida pelo coordenador: "sem dados" é mais honesto
+    // que "sem escala registrada" quando não há NENHUM dia com operação.
+    const amostras = [
+      amostra(0, 2),
+      amostra(0, 3),
+      amostra(0, 1),
+      amostra(0, 4),
+      amostra(0, 2),
+      amostra(0, 1),
+    ];
+
+    const r = calcularProdutividadeHistorica(amostras);
+
+    expect(r.valor).toBeNull();
+    expect(r.amostras).toBe(0);
+    expect(r.motivo).toMatch(/insuficiente|m[ií]nimo|5 dias/i);
+    expect(r.motivo).not.toMatch(/sem escala/i);
+  });
+});
+
+describe("calcularProdutividadeHistorica — R11: validação de amostra negativa", () => {
+  it("lança AmostraInvalidaError quando atendimentos é negativo", () => {
+    const amostras = [
+      amostra(10, 1),
+      amostra(10, 1),
+      amostra(-5, 1),
+      amostra(10, 1),
+      amostra(10, 1),
+    ];
+
+    expect(() => calcularProdutividadeHistorica(amostras)).toThrow(AmostraInvalidaError);
+    try {
+      calcularProdutividadeHistorica(amostras);
+      throw new Error("deveria ter lançado");
+    } catch (erro) {
+      expect(erro).toBeInstanceOf(AmostraInvalidaError);
+      const e = erro as AmostraInvalidaError;
+      expect(e.campo).toBe("atendimentos");
+      expect(e.valor).toBe(-5);
+      expect(e.indice).toBe(2);
+      expect(e.message).toMatch(/atendimentos/);
+      expect(e.message).toMatch(/-5/);
+    }
+  });
+
+  it("lança AmostraInvalidaError quando pessoasHora é negativo", () => {
+    const amostras = [
+      amostra(10, 1),
+      amostra(10, -2),
+      amostra(10, 1),
+      amostra(10, 1),
+      amostra(10, 1),
+    ];
+
+    expect(() => calcularProdutividadeHistorica(amostras)).toThrow(AmostraInvalidaError);
+    try {
+      calcularProdutividadeHistorica(amostras);
+      throw new Error("deveria ter lançado");
+    } catch (erro) {
+      expect(erro).toBeInstanceOf(AmostraInvalidaError);
+      const e = erro as AmostraInvalidaError;
+      expect(e.campo).toBe("pessoasHora");
+      expect(e.valor).toBe(-2);
+      expect(e.indice).toBe(1);
+      expect(e.message).toMatch(/pessoasHora/);
+      expect(e.message).toMatch(/-2/);
+    }
+  });
+
+  it("zero continua válido em ambos os campos — não lança, só aciona as guardas normais", () => {
+    // Zero é o sinal correto de "dia fechado"/"sem escala" — não pode
+    // virar erro, senão o comportamento de guarda já validado quebra.
+    const amostras = [
+      amostra(0, 0), // fechado + sem escala, ambos zero: descartado, sem lançar
+      amostra(10, 1),
+      amostra(10, 1),
+      amostra(10, 1),
+      amostra(10, 1),
+      amostra(10, 1),
+    ];
+
+    expect(() => calcularProdutividadeHistorica(amostras)).not.toThrow();
+
+    const r = calcularProdutividadeHistorica(amostras);
+    expect(r.valor).toBe(10);
+    expect(r.amostras).toBe(5);
   });
 });
