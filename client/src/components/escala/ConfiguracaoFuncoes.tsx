@@ -16,12 +16,19 @@
  *
  * Fluxo de produtividade (requisito de produto — nunca aparece vazia sem
  * explicação):
- * - Ao editar uma função existente, busca `escala.sugerirProdutividade`
- *   imediatamente e pré-preenche o campo, com rótulo da origem.
- * - Ao criar uma função nova, não há `funcaoId` ainda para sugerir nada —
- *   o diálogo permanece aberto após o primeiro "Salvar" (que cria a
- *   função) e, uma vez que o id existe, a sugestão chega e preenche o
- *   campo automaticamente, sem exigir uma ida e volta manual do gestor.
+ * - R20 (pós-revisão): assim que o diálogo abre — função nova OU
+ *   existente — já busca `escala.sugerirProdutividade` com `{storeId,
+ *   driver}` e pré-preenche o campo, com rótulo da origem. A sugestão
+ *   deriva do HISTÓRICO DA LOJA por driver, não da identidade da função
+ *   (`funcaoId` é só um refinamento opcional, enviado quando a função já
+ *   existe) — por isso não precisa de um id pra sugerir nada, e o
+ *   salvamento volta a ser UMA ação só (sem fase 2). Isto corrige o
+ *   defeito de produto identificado na revisão: com a assinatura antiga
+ *   (`funcaoId` obrigatório), TODA função nova nascia com o campo vazio —
+ *   exatamente o caso mais comum (gestor cadastrando a loja do zero).
+ * - Trocar o driver no formulário busca uma sugestão nova para aquele
+ *   driver (query key muda) e a reaplica, desde que o gestor não tenha
+ *   digitado um valor manualmente nesta sessão.
  * - Quando a sugestão vem `null`, mostra o motivo (vindo do servidor) e
  *   pede o número ao gestor.
  * - Qualquer edição manual do campo marca a origem como "definida por
@@ -92,9 +99,13 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
   // gestor já digitou/confirmou nesta sessão de edição.
   const [produtividadeTocada, setProdutividadeTocada] = useState(false);
 
+  // R20: busca a sugestão assim que o diálogo abre, para QUALQUER driver —
+  // não depende mais de `editingId` existir. `funcaoId` vai como
+  // refinamento opcional quando a função já existe (editando); fica
+  // `undefined` para função nova.
   const sugestaoQuery = trpc.escala.sugerirProdutividade.useQuery(
-    { storeId, funcaoId: editingId ?? 0 },
-    { enabled: showForm && editingId != null && storeId > 0 }
+    { storeId, driver: form.driver, funcaoId: editingId ?? undefined },
+    { enabled: showForm && storeId > 0 }
   );
 
   useEffect(() => {
@@ -105,20 +116,15 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
     }
   }, [sugestaoQuery.data, produtividadeTocada]);
 
+  // R20: salvar volta a ser uma ação só — a produtividade já chega
+  // pré-preenchida (sugestão ou valor do gestor) antes do primeiro clique
+  // em "Salvar", então não há mais necessidade de manter o diálogo aberto
+  // numa segunda fase para "esperar" a sugestão depender de um id.
   const salvarMut = trpc.escala.salvarFuncao.useMutation({
-    onSuccess: (data) => {
+    onSuccess: () => {
       utils.escala.getConfig.invalidate({ storeId });
-      if (editingId == null) {
-        // Função recém-criada: mantém o diálogo aberto para a sugestão de
-        // produtividade (que depende do id) chegar e o gestor confirmar
-        // ou ajustar antes de sair — nunca fecha com o campo em branco
-        // sem o gestor ver.
-        toast.success("Função criada! Buscando a produtividade sugerida...");
-        setEditingId(data.id);
-      } else {
-        toast.success("Função salva!");
-        closeForm();
-      }
+      toast.success("Função salva!");
+      closeForm();
     },
     onError: (e) => toast.error("Não foi possível salvar a função: " + e.message),
   });
@@ -190,8 +196,7 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
     });
   }
 
-  const sugestaoIndisponivel =
-    editingId != null && !sugestaoQuery.isLoading && (sugestaoQuery.data?.valor ?? null) == null;
+  const sugestaoIndisponivel = !sugestaoQuery.isLoading && (sugestaoQuery.data?.valor ?? null) == null;
 
   return (
     <div className="space-y-4">
@@ -303,11 +308,7 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Produtividade alvo ({DRIVER_LABELS[form.driver].toLowerCase()}/hora)
               </label>
-              {editingId == null ? (
-                <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-                  Salve os dados acima para ver a produtividade sugerida com base no histórico da loja.
-                </p>
-              ) : sugestaoQuery.isLoading && form.produtividadeAlvo === "" ? (
+              {sugestaoQuery.isLoading && form.produtividadeAlvo === "" ? (
                 <p className="text-xs text-muted-foreground">Buscando sugestão de produtividade...</p>
               ) : (
                 <>

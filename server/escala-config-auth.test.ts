@@ -138,7 +138,10 @@ const ENTRADA_VALIDA: Record<string, (storeId: number) => Record<string, unknown
     fonte: "teste",
   }),
   getCatalogo: (storeId) => ({ storeId, data: "2026-11-19" }),
-  sugerirProdutividade: (storeId) => ({ storeId, funcaoId: 1 }),
+  // R20: `funcaoId` é opcional desde o fix pós-revisão da Task 5 — a
+  // entrada mínima válida do caso MAIS COMUM (função ainda não criada)
+  // não leva `funcaoId`, só `driver`.
+  sugerirProdutividade: (storeId) => ({ storeId, driver: "tickets" }),
 };
 
 // ─── Teste genérico: TODA procedure chama assertPodeAcessarLoja ──────────────
@@ -208,6 +211,57 @@ describe("escalaRouter — toda procedure chama assertPodeAcessarLoja (sem exce�
       expect(getStoresByUserId).not.toHaveBeenCalled();
     }
   );
+});
+
+// ─── R20 (pós-revisão da Task 5): sugerirProdutividade aceita funcaoId
+// opcional — a sugestão deriva do histórico da loja por driver, não da
+// identidade da função. Sem isto, TODA função nova nascia com a
+// produtividade vazia (o caso mais comum: gestor cadastrando a loja do
+// zero), contradizendo o requisito "a produtividade nunca aparece como
+// campo vazio". ────────────────────────────────────────────────────────────
+
+describe("escala.sugerirProdutividade — R20: driver é o parâmetro principal, funcaoId é opcional", () => {
+  it("aceita {storeId, driver} SEM funcaoId (função ainda não criada) — passa driver e funcaoId=undefined pra camada de dados", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    await expect(caller.sugerirProdutividade({ storeId: 1, driver: "tickets" })).resolves.toBeDefined();
+
+    expect(dbEscalaConfig.sugerirProdutividade).toHaveBeenCalledWith(1, "tickets", undefined);
+  });
+
+  it("aceita {storeId, driver, funcaoId} (função já existe) — refinamento opcional chega intacto pra camada de dados", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    await expect(
+      caller.sugerirProdutividade({ storeId: 1, driver: "pratos", funcaoId: 7 })
+    ).resolves.toBeDefined();
+
+    expect(dbEscalaConfig.sugerirProdutividade).toHaveBeenCalledWith(1, "pratos", 7);
+  });
+
+  it("rejeita entrada sem driver — driver passou a ser obrigatório no contrato novo", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(
+      caller.sugerirProdutividade({ storeId: 1, funcaoId: 7 } as any)
+    ).rejects.toThrow();
+    expect(dbEscalaConfig.sugerirProdutividade).not.toHaveBeenCalled();
+  });
+
+  it("rejeita driver fora de tickets|pratos|cobertos — mesma validação de salvarFuncao, não afrouxada aqui", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(
+      caller.sugerirProdutividade({ storeId: 1, driver: "clientes" as any })
+    ).rejects.toThrow();
+    expect(dbEscalaConfig.sugerirProdutividade).not.toHaveBeenCalled();
+  });
+
+  it("continua atrás do gate: loja de outro gestor → FORBIDDEN mesmo com entrada válida", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(
+      caller.sugerirProdutividade({ storeId: 999, driver: "tickets" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(dbEscalaConfig.sugerirProdutividade).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Validação de entrada: salvarFuncao ──────────────────────────────────────

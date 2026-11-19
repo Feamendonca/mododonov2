@@ -191,10 +191,16 @@ export const escalaRouter = router({
     }),
 
   // ── Produtividade sugerida ────────────────────────────────────────────────
+  // R20 (pós-revisão da Task 5): `funcaoId` era obrigatório, o que impedia
+  // sugerir produtividade para uma função ainda não criada — o caso mais
+  // comum (gestor cadastrando a loja do zero). A sugestão deriva do
+  // histórico da loja por `driver`, não da identidade da função;
+  // `funcaoId` agora é OPCIONAL e só refina (confirma que a função já
+  // existe nesta loja) quando informado.
   sugerirProdutividade: protectedProcedure
-    .input(z.object({ storeId: z.number(), funcaoId: z.number() }))
+    .input(z.object({ storeId: z.number(), driver: driverSchema, funcaoId: z.number().optional() }))
     .query(async ({ ctx, input }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);
-      return sugerirProdutividade(input.storeId, input.funcaoId);
+      return sugerirProdutividade(input.storeId, input.driver, input.funcaoId);
     }),
 });

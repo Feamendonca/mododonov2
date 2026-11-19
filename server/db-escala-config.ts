@@ -418,22 +418,50 @@ async function getPessoasHoraPorDia(storeId: number, inicio: string, fim: string
  * (Task 3) calcular — mediana dos dias válidos, ou `{valor: null, motivo}`
  * quando não há base suficiente. Procedure fina: zero lógica de negócio
  * aqui, só leitura + montagem de amostra (R2 do controlador).
+ *
+ * R20 (pós-revisão da Task 5): a assinatura original exigia `funcaoId`,
+ * o que tornava IMPOSSÍVEL sugerir produtividade para uma função que
+ * ainda não existe — exatamente o caso mais comum (gestor cadastrando a
+ * loja do zero). A sugestão nunca dependeu da IDENTIDADE da função: ela
+ * deriva do histórico da loja (`atendimentos` ÷ pessoas-hora), ponto.
+ * `driver` agora é o parâmetro principal e `funcaoId` passou a ser
+ * OPCIONAL — serve só para, quando a função já existe, confirmar que ela
+ * pertence a esta loja antes de sugerir (refinamento, não pré-requisito).
+ *
+ * `driver` é aceito e obrigatório no contrato (forward-compat com um
+ * cálculo segregado por driver), mas `daily_entries` tem uma única
+ * coluna `atendimentos` — não há, hoje, contagem separada de
+ * tickets/pratos/cobertos no schema. Por isso o valor de `driver` não
+ * muda o cálculo abaixo; é a mesma limitação já registrada na
+ * Preocupação 4 do relatório da Task 4, agora explícita na assinatura
+ * em vez de escondida atrás de um parâmetro que fingia ser usado.
  */
-export async function sugerirProdutividade(storeId: number, funcaoId: number): Promise<ResultadoProdutividadeHistorica> {
+export async function sugerirProdutividade(
+  storeId: number,
+  driver: DriverFuncao,
+  funcaoId?: number,
+): Promise<ResultadoProdutividadeHistorica> {
+  void driver; // ver comentário acima: aceito pelo contrato, não usado no cálculo hoje.
+
   const db = await getDb();
   if (!db) return { valor: null, motivo: "Banco de dados indisponível.", amostras: 0 };
 
-  const funcaoRows = await db
-    .select()
-    .from(funcoesLoja)
-    .where(and(eq(funcoesLoja.id, funcaoId), eq(funcoesLoja.storeId, storeId)))
-    .limit(1);
-  if (!funcaoRows[0]) {
-    return {
-      valor: null,
-      motivo: `Função ${funcaoId} não encontrada na loja ${storeId}.`,
-      amostras: 0,
-    };
+  // Refinamento opcional: só valida que a função pertence à loja quando
+  // `funcaoId` é informado. Sem `funcaoId` (caso de função nova, ainda
+  // não salva), a sugestão vem direto do histórico da loja.
+  if (funcaoId != null) {
+    const funcaoRows = await db
+      .select()
+      .from(funcoesLoja)
+      .where(and(eq(funcoesLoja.id, funcaoId), eq(funcoesLoja.storeId, storeId)))
+      .limit(1);
+    if (!funcaoRows[0]) {
+      return {
+        valor: null,
+        motivo: `Função ${funcaoId} não encontrada na loja ${storeId}.`,
+        amostras: 0,
+      };
+    }
   }
 
   const fim = hojeISO();
