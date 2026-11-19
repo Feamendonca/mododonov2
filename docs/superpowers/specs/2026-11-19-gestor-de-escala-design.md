@@ -201,3 +201,46 @@ Ponto eletrônico · banco de horas · férias e afastamentos · integração co
 3. **Situação das CCTs** nas praças — há negociação em curso por causa do prazo de 16/12?
 4. **Como a AMFoods vai absorver a EC 141:** contratar, alongar jornada diária via acordo, ou migrar turnos para 12x36? A decisão muda o peso de cada escala no catálogo.
 5. **Validação do catálogo legal com o trabalhista** antes de o motor entrar em produção.
+
+---
+
+# Visão completa do módulo (registrada 2026-11-19)
+
+> Decisão do Fernando: isto não é um gerador de escala — é **o sistema de gestão de pessoas da operação**, robusto e confiável. E **todo o acesso é pelo app**, de propósito: planilha paralela mata o hábito.
+
+## O princípio que vale para tudo abaixo
+🔑 **A melhor prática não vem de fora — está dentro de casa.** A análise das DREs mostrou lojas rodando folha a **11-17%** (Pecorino GRU T2, Mania Men14, CPQ P9, família Bob's) contra outras a **30-38%** na mesma operação, mesmas marcas, mesmo país. O benchmark é interno, e é mais defensável que qualquer referência de mercado: ninguém pode dizer "aqui é diferente" quando a loja comparada é do mesmo grupo.
+
+⚠️ **Com a EC 141, parte dessa referência fica obsoleta.** As lojas boas chegaram em 13% sob 6x1 e 44h. A régua precisa ser recalculada no regime de 42h — e o sistema é justamente quem vai descobrir a nova melhor prática, observando quem se adaptar melhor.
+
+## As cinco camadas
+
+| # | Camada | Entrega | Status |
+|---|---|---|---|
+| 1 | **Configuração** | o gerente cadastra funções, drivers, regras e blocos da loja dele | 🔵 em execução |
+| 2 | **Demanda** | curva calibrada por bloco; total do dia distribui pela curva aprendida | ⬜ planejado |
+| 3 | **Geração** | motor: dimensiona → quadro mínimo → aloca → folgas → valida → custeia | ⬜ planejado |
+| 4 | **Análise e insights** | lê a escala montada e diz o que está errado nela | ⬜ a planejar |
+| 5 | **Custo e estratégia de folha** | projeção, simulação de cenários e comparação com a melhor loja | ⬜ a planejar |
+
+### Camada 4 — Análise e insights
+Roda sobre a escala já montada (gerada pelo motor **ou** feita à mão pelo gerente — as duas precisam ser analisáveis).
+
+- **Cobertura × demanda por bloco:** onde sobra gente e onde falta. Pico descoberto é venda perdida; vale ociosa é folha queimada.
+- **Produtividade realizada × alvo**, por função e por pessoa.
+- **Risco legal:** interjornada violada, dias consecutivos no limite, domingos fora da regra, jornada semanal estourando — **antes** de a escala virar realidade, não depois.
+- **Concentração:** quando a operação depende demais de uma pessoa só num bloco (risco de falta).
+- **Desvio de hábito:** o gerente sempre escala mais gente na sexta do que a demanda justifica? O sistema mostra o padrão.
+
+### Camada 5 — Custo e estratégia de folha
+- **Folha projetada da escala** × meta da loja × realizado da DRE — fechando o ciclo orçado→executado que o módulo de Orçamento já faz para as outras linhas.
+- **Simulação de cenários:** quanto custa migrar de 5x2 para 4x3 nesta loja? E contratar meio período em vez de hora extra?
+- **Comparação com a melhor loja da rede** na mesma faixa de faturamento e mesmo segmento — os campos `faixaFaturamento` e `segmento` já existem em `stores`.
+- **Impacto da EC 141 por loja:** quanto headcount a mais, quanto de folha a mais, e qual arranjo de escalas minimiza o golpe.
+- **Horas extras × contratação:** a partir de que ponto sai mais barato contratar.
+
+## Regra de acesso (decisão do Fernando)
+**Tudo pelo app.** Nada de planilha paralela, nada de relatório por e-mail que substitua a tela. O gerente entra no app para montar, para analisar e para justificar. É assim que o hábito se forma — e é o hábito que faz o dado chegar, não o contrário.
+
+## Como isto se liga ao resto do app
+O módulo não vive sozinho: a folha projetada alimenta o **Orçamento** (linha de pessoal), as metas alimentam o **4DX**, e os desvios viram **ações** e **treinamentos** — a mesma cadeia que o Orçamento já percorre.
