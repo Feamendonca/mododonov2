@@ -29,6 +29,7 @@ import {
   type AmostraProdutividade,
   type ResultadoProdutividadeHistorica,
 } from "./escala-produtividade";
+import { REGRAS_LEGAIS_INICIAIS } from "./escala-catalogo-seed";
 import type { DriverFuncao, RegraSeed, TipoRegra } from "./escala-catalogo-seed";
 
 // ─── Funções da loja (funcoes_loja) ───────────────────────────────────────────
@@ -115,9 +116,18 @@ export interface UpdateFuncaoInput {
   maxPorBloco?: number | null;
 }
 
-export async function updateFuncao(id: number, storeId: number, data: UpdateFuncaoInput): Promise<void> {
+/**
+ * Devolve `true` quando a função existia nesta loja e foi atualizada,
+ * `false` quando `id`/`storeId` não casam com nenhuma linha (id de outra
+ * loja ou inexistente). Menor 9/10 do fix loop da Task 4: antes, `!db`
+ * retornava em silêncio e nenhuma linha afetada também não era checada —
+ * a procedure sempre respondia `{success: true}` mesmo sem ter mudado
+ * nada. `db` indisponível agora LANÇA (padronizado com `createFuncao`),
+ * em vez de fingir sucesso; o router decide o que fazer com `false`.
+ */
+export async function updateFuncao(id: number, storeId: number, data: UpdateFuncaoInput): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("DB unavailable");
   const set: Partial<InsertFuncaoLoja> = { updatedAt: new Date() };
   if (data.nome !== undefined) set.nome = data.nome;
   if (data.driver !== undefined) set.driver = data.driver;
@@ -127,16 +137,25 @@ export async function updateFuncao(id: number, storeId: number, data: UpdateFunc
   if (data.produtividadeOrigem !== undefined) set.produtividadeOrigem = data.produtividadeOrigem;
   if (data.minPorBloco !== undefined) set.minPorBloco = data.minPorBloco;
   if (data.maxPorBloco !== undefined) set.maxPorBloco = data.maxPorBloco;
-  await db.update(funcoesLoja).set(set).where(and(eq(funcoesLoja.id, id), eq(funcoesLoja.storeId, storeId)));
+  const result = await db
+    .update(funcoesLoja)
+    .set(set)
+    .where(and(eq(funcoesLoja.id, id), eq(funcoesLoja.storeId, storeId)))
+    .returning({ id: funcoesLoja.id });
+  return result.length > 0;
 }
 
-export async function desativarFuncao(id: number, storeId: number): Promise<void> {
+/** Mesmo contrato de `updateFuncao`: devolve `true` só quando desativou de
+ * verdade uma linha desta loja. */
+export async function desativarFuncao(id: number, storeId: number): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
-  await db
+  if (!db) throw new Error("DB unavailable");
+  const result = await db
     .update(funcoesLoja)
     .set({ ativo: false, updatedAt: new Date() })
-    .where(and(eq(funcoesLoja.id, id), eq(funcoesLoja.storeId, storeId)));
+    .where(and(eq(funcoesLoja.id, id), eq(funcoesLoja.storeId, storeId)))
+    .returning({ id: funcoesLoja.id });
+  return result.length > 0;
 }
 
 // ─── Regras (regras_escala) ───────────────────────────────────────────────────
@@ -186,6 +205,33 @@ export interface UpsertRegraLojaInput {
   fonte: string;
 }
 
+/** Chaves do catálogo legal de REDE (Task 1, `REGRAS_LEGAIS_INICIAIS`).
+ * I6 do fix loop da Task 4: usada por `upsertRegraLoja` pra impedir que o
+ * gestor da loja derrube uma trava legal (ex.: `jornada_max_semanal` da EC
+ * 141) só cadastrando uma regra de escopo loja — pela precedência da Task
+ * 2 (`escala-regras.ts`), escopo loja (peso 3) vence rede (peso 1), então
+ * sem este guard um usuário comum reescreveria a lei pela tela. */
+export const CHAVES_LEGAIS_REDE: ReadonlySet<string> = new Set(
+  REGRAS_LEGAIS_INICIAIS.map((regra) => regra.chave)
+);
+
+/** Lançado quando `upsertRegraLoja` tentaria sobrescrever, em escopo loja,
+ * uma chave do catálogo legal de rede com algo diferente de `MOLE` (I6).
+ * `MOLE` é preferência, não trava — pode ser ajustada pela loja. `DURA`/
+ * `DEPENDE_CCT` numa chave legal só entra pelo cadastro de rede (fora do
+ * escopo desta task). */
+export class RegraLojaNaoPermitidaError extends Error {
+  readonly chave: string;
+
+  constructor(chave: string) {
+    super(
+      `"${chave}" é uma chave do catálogo legal de rede — a loja só pode cadastrá-la como regra MOLE (preferência). Sobrescrever DURA/DEPENDE_CCT por aqui derrubaria uma trava legal; isso exige o cadastro de rede.`
+    );
+    this.name = "RegraLojaNaoPermitidaError";
+    this.chave = chave;
+  }
+}
+
 /**
  * Upsert de regra de ESCOPO LOJA (storeId fixo, uf/cct sempre nulos — regra
  * por UF/CCT não é cadastro de gestor, é dado do catálogo legal). Chave
@@ -201,8 +247,12 @@ export interface UpsertRegraLojaInput {
  * busca por `IS NULL` explícito, depois UPDATE ou INSERT.
  */
 export async function upsertRegraLoja(storeId: number, data: UpsertRegraLojaInput): Promise<void> {
+  if (CHAVES_LEGAIS_REDE.has(data.chave) && data.tipo !== "MOLE") {
+    throw new RegraLojaNaoPermitidaError(data.chave);
+  }
+
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("DB unavailable");
   const vigenciaInicio = data.vigenciaInicio ?? null;
   const vigenciaInicioCondition =
     vigenciaInicio === null ? isNull(regrasEscala.vigenciaInicio) : eq(regrasEscala.vigenciaInicio, vigenciaInicio);
@@ -318,6 +368,26 @@ function subtrairDias(dataISO: string, dias: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Normaliza `workDate` pra string ISO "AAAA-MM-DD". `getScheduleForWeek`
+ * (server/db-pessoas.ts) lê `schedules` pelo shim raw do `pg`, sem o
+ * override de type parser do Drizzle — a coluna `date` pode voltar como
+ * `string` OU como objeto `Date`, dependendo do caminho de leitura.
+ *
+ * I2 (fix loop da Task 4): sem esta normalização, `getPessoasHoraPorDia`
+ * chavava o Map por `entry.workDate` (possivelmente um `Date`), e
+ * `sugerirProdutividade` lia com `pessoasHoraPorDia.get(entrada.entryDate)`
+ * — `entryDate` é sempre `string` (`daily_entries.entryDate` é
+ * `varchar(10)`). `Map.get(string)` num mapa chaveado por objeto `Date`
+ * NUNCA casa: toda amostra ficava com `pessoasHora: 0`, a Task 3 descartava
+ * todo dia por "sem escala registrada", e a mensagem de guarda (plausível!)
+ * escondia um bug de encanamento — exatamente a classe de defeito que este
+ * plano inteiro existe para evitar.
+ */
+export function workDateParaIso(workDate: string | Date): string {
+  return typeof workDate === "string" ? workDate : workDate.toISOString().slice(0, 10);
+}
+
 /** Pessoas-hora por dia no período, a partir de `schedules` + `shift_blocks`
  * — reusa `blockDurationHours` (server/db-pessoas.ts) em vez de recalcular
  * duração de bloco. Soma todas as pessoas escaladas em todos os blocos do
@@ -335,8 +405,9 @@ async function getPessoasHoraPorDia(storeId: number, inicio: string, fim: string
   for (const entry of scheduleEntries) {
     const block = blockById.get(entry.shiftBlockId);
     if (!block) continue;
+    const dia = workDateParaIso(entry.workDate as unknown as string | Date);
     const horas = blockDurationHours({ startMinute: block.startMinute, endMinute: block.endMinute });
-    pessoasHoraPorDia.set(entry.workDate, (pessoasHoraPorDia.get(entry.workDate) ?? 0) + horas);
+    pessoasHoraPorDia.set(dia, (pessoasHoraPorDia.get(dia) ?? 0) + horas);
   }
   return pessoasHoraPorDia;
 }

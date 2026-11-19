@@ -104,10 +104,18 @@ function validarFormatoData(valor: string, campo: string): void {
  * texto livre) — quem monta `ctx.uf` à mão pode mandar "sp", " SP " etc.
  * Sem normalizar, isso não dá erro: simplesmente não casa com a regra de
  * UF e cai, em silêncio, para a regra de rede — valor errado, não
- * ausência. Normalizamos os dois lados (ctx e regra) pelo mesmo motivo. */
-function normalizarUf(uf: string | null | undefined): string | null {
+ * ausência. Normalizamos os dois lados (ctx e regra) pelo mesmo motivo.
+ *
+ * `""` (string vazia, após trim) normaliza para `null` — mesma convenção
+ * de "sem UF" usada por `server/routers/escala.ts` para sinalizar loja sem
+ * UF cadastrada (R13). Exportada para ser a ÚNICA implementação no módulo
+ * de Escala (Menor 11 do fix loop da Task 4): havia uma cópia divergente
+ * no router (`"" → ""`, em vez de `"" → null`); duas implementações da
+ * mesma normalização é como nasce um "sp" ≠ "SP" novo mais tarde. */
+export function normalizarUf(uf: string | null | undefined): string | null {
   if (uf === null || uf === undefined) return null;
-  return uf.trim().toUpperCase();
+  const limpa = uf.trim().toUpperCase();
+  return limpa.length > 0 ? limpa : null;
 }
 
 function escopoDaRegra(regra: RegraSeed): Escopo {
