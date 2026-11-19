@@ -91,6 +91,57 @@ function validarDataIso(valor: string, campo: string): void {
   }
 }
 
+// ─── Passo 1: validação de horário de funcionamento ───────────────────────────
+
+export interface EntradaValidarHorarioFuncionamento {
+  operationStartHour: number;
+  operationEndHour: number;
+}
+
+/**
+ * Validação de tela para o passo 1 (horário de funcionamento) — espelha,
+ * sem relaxar nada, o que `pessoas.saveConfig` (`server/routers/pessoas.ts`)
+ * já exige: `operationStartHour` inteiro em [0, 23], `operationEndHour`
+ * inteiro em [1, 24], e **fechamento depois da abertura**.
+ *
+ * 🔴 I1 (revisão da Task 6) — a checagem de fechamento > abertura vivia só
+ * dentro de `AssistenteConfiguracao.tsx` (`salvarHorario`), sem teste
+ * (ruling R19: sem `.test.tsx` neste repo) e sem equivalente no servidor —
+ * qualquer caminho que não passasse por aquele componente gravava horário
+ * inválido em silêncio. Movida para aqui (testada) e espelhada no servidor
+ * via `.refine()` no schema de `saveConfig` — a regra agora é testada dos
+ * dois lados, e o servidor é a tranca real, esta função é só conveniência
+ * de tela (mesma relação que `validarFuncao` tem com `salvarFuncao`,
+ * Task 5, `escala-config-ui.ts`).
+ *
+ * Devolve TODOS os erros encontrados (não para no primeiro), mesmo padrão
+ * de `validarFuncao`. A comparação "fechamento > abertura" só roda quando
+ * os dois valores individuais já são inteiros dentro da faixa — um erro de
+ * faixa num dos dois não deveria também disparar "fechamento precisa ser
+ * depois da abertura" quando o problema real é que um deles nem é um
+ * horário válido.
+ */
+export function validarHorarioFuncionamento(entrada: EntradaValidarHorarioFuncionamento): string[] {
+  const erros: string[] = [];
+  const { operationStartHour: s, operationEndHour: e } = entrada;
+
+  const aberturaValida = Number.isInteger(s) && s >= 0 && s <= 23;
+  if (!aberturaValida) {
+    erros.push("A hora de abertura deve ser um número inteiro entre 0 e 23.");
+  }
+
+  const fechamentoValido = Number.isInteger(e) && e >= 1 && e <= 24;
+  if (!fechamentoValido) {
+    erros.push("A hora de fechamento deve ser um número inteiro entre 1 e 24.");
+  }
+
+  if (aberturaValida && fechamentoValido && e <= s) {
+    erros.push("O horário de fechamento precisa ser depois do horário de abertura.");
+  }
+
+  return erros;
+}
+
 // ─── Passo 4: regras pendentes de confirmação ─────────────────────────────────
 
 /**

@@ -23,6 +23,7 @@ import {
   FormatoDataInvalidoError,
   podeGerarEscala,
   regrasPendentesDeConfirmacao,
+  validarHorarioFuncionamento,
   type EscalaCatalogoItem,
   type EstadoAssistente,
   type RegraResolvidaLike,
@@ -77,6 +78,68 @@ const CATALOGO_FIXTURE: EscalaCatalogoItem[] = [
     observacaoLegal: "40h/semana — não depende da data da EC 141/2026.",
   },
 ];
+
+// ─── validarHorarioFuncionamento ───────────────────────────────────────────
+//
+// I1 (revisão da Task 6): esta regra — inclusive a checagem cruzada
+// "fechamento depois da abertura" — vivia só em
+// AssistenteConfiguracao.tsx, sem teste (ruling R19) e sem equivalente no
+// servidor. Movida para aqui e espelhada em `pessoas.saveConfig`
+// (server/routers/pessoas.ts, via `.refine()` — ver
+// server/pessoas-saveconfig-horario.test.ts para o lado do servidor).
+
+describe("validarHorarioFuncionamento", () => {
+  it("não gera erro para um horário válido", () => {
+    expect(validarHorarioFuncionamento({ operationStartHour: 8, operationEndHour: 23 })).toEqual([]);
+  });
+
+  it("rejeita fechamento igual à abertura", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 10, operationEndHour: 10 });
+    expect(erros.some((e) => /fechamento.*depois.*abertura/i.test(e))).toBe(true);
+  });
+
+  it("rejeita fechamento antes da abertura", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 23, operationEndHour: 8 });
+    expect(erros.some((e) => /fechamento.*depois.*abertura/i.test(e))).toBe(true);
+  });
+
+  it("rejeita abertura fora da faixa (negativa)", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: -1, operationEndHour: 23 });
+    expect(erros.some((e) => /abertura/i.test(e))).toBe(true);
+  });
+
+  it("rejeita abertura fora da faixa (>23)", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 24, operationEndHour: 24 });
+    expect(erros.some((e) => /abertura/i.test(e))).toBe(true);
+  });
+
+  it("rejeita fechamento fora da faixa (0)", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 0, operationEndHour: 0 });
+    expect(erros.some((e) => /fechamento/i.test(e))).toBe(true);
+  });
+
+  it("rejeita fechamento fora da faixa (>24)", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 8, operationEndHour: 25 });
+    expect(erros.some((e) => /fechamento/i.test(e))).toBe(true);
+  });
+
+  it("rejeita valores não-inteiros", () => {
+    const erros = validarHorarioFuncionamento({ operationStartHour: 8.5, operationEndHour: 23 });
+    expect(erros.length).toBeGreaterThan(0);
+  });
+
+  it("não duplica o erro de 'fechamento depois da abertura' quando um dos dois já está fora de faixa", () => {
+    // abertura invalida (30) — o problema real é a faixa, não a comparação
+    // cruzada; não deveria aparecer a mensagem de "fechamento precisa ser
+    // depois" junto, que seria redundante e confusa.
+    const erros = validarHorarioFuncionamento({ operationStartHour: 30, operationEndHour: 5 });
+    expect(erros.some((e) => /fechamento.*depois.*abertura/i.test(e))).toBe(false);
+  });
+
+  it("aceita o limite máximo (abertura 0, fechamento 24 — loja 24h)", () => {
+    expect(validarHorarioFuncionamento({ operationStartHour: 0, operationEndHour: 24 })).toEqual([]);
+  });
+});
 
 // ─── avaliarPassos ──────────────────────────────────────────────────────────
 

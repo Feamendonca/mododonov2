@@ -74,15 +74,38 @@ export const pessoasRouter = router({
     }),
 
   saveConfig: protectedProcedure
-    .input(z.object({
-      storeId: z.number(),
-      chargesPercent: z.number().min(0).max(200).optional(),
-      productivityTarget: z.number().min(0).optional(),
-      payrollTargetPercent: z.number().min(0).max(100).optional(),
-      hiringCost: z.number().min(0).optional(),
-      operationStartHour: z.number().min(0).max(23).optional(),
-      operationEndHour: z.number().min(1).max(24).optional(),
-    }))
+    .input(
+      z
+        .object({
+          storeId: z.number(),
+          chargesPercent: z.number().min(0).max(200).optional(),
+          productivityTarget: z.number().min(0).optional(),
+          payrollTargetPercent: z.number().min(0).max(100).optional(),
+          hiringCost: z.number().min(0).optional(),
+          operationStartHour: z.number().min(0).max(23).optional(),
+          operationEndHour: z.number().min(1).max(24).optional(),
+        })
+        // I1 (revisão da Task 6, módulo de Escala): a checagem cruzada
+        // "fechamento depois da abertura" vivia só no
+        // AssistenteConfiguracao.tsx — sem teste (ruling R19, sem
+        // .test.tsx neste repo) e sem tranca no servidor. Qualquer
+        // caminho que não passasse por aquele componente (outra tela,
+        // uma chamada direta à procedure) podia gravar um horário
+        // inválido. Só valida quando os DOIS campos chegam juntos —
+        // uma atualização parcial que toca só um dos dois (ou nenhum)
+        // não tem como ser comparada contra o valor já salvo do outro
+        // lado, então não é bloqueada aqui.
+        .refine(
+          (data) =>
+            data.operationStartHour === undefined ||
+            data.operationEndHour === undefined ||
+            data.operationEndHour > data.operationStartHour,
+          {
+            message: "O horário de fechamento precisa ser depois do horário de abertura.",
+            path: ["operationEndHour"],
+          }
+        )
+    )
     .mutation(async ({ ctx, input }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);
       const { storeId, ...data } = input;

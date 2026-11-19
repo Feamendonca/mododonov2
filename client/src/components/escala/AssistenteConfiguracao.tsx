@@ -67,6 +67,7 @@ import {
   escalasDisponiveis,
   podeGerarEscala,
   regrasPendentesDeConfirmacao,
+  validarHorarioFuncionamento,
   type AvaliacaoPasso,
   type EstadoAssistente,
   type RegraResolvidaLike,
@@ -162,12 +163,13 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
   function salvarHorario() {
     const s = Number(startHour);
     const e = Number(endHour);
-    if (!Number.isInteger(s) || !Number.isInteger(e) || s < 0 || s > 23 || e < 1 || e > 24) {
-      toast.error("Informe horas inteiras válidas (abertura entre 0h e 23h, fechamento entre 1h e 24h).");
-      return;
-    }
-    if (e <= s) {
-      toast.error("O horário de fechamento precisa ser depois do de abertura.");
+    // I1 (revisão da Task 6): a validação — inclusive a checagem cruzada
+    // "fechamento depois da abertura" — vive em `escala-assistente.ts`
+    // (testada), espelhando o `.refine()` do servidor. Este componente só
+    // chama a função pura e mostra os erros que ela encontrar.
+    const erros = validarHorarioFuncionamento({ operationStartHour: s, operationEndHour: e });
+    if (erros.length > 0) {
+      erros.forEach((erro) => toast.error(erro));
       return;
     }
     salvarHorarioMut.mutate({ storeId, operationStartHour: s, operationEndHour: e });
