@@ -17,11 +17,22 @@
  *      no cálculo de escopo nem no contexto de resolução desta task —
  *      resolução por CCT é tarefa de etapa futura do motor.)
  *   3. Empate de escopo → vence a `vigenciaInicio` mais recente.
+ *   4. Empate total (mesmo escopo, mesma vigenciaInicio — ex.: duas regras
+ *      iguais diferindo só em `cct`/`fonte`, que o unique de regras_escala
+ *      permite) → desempate final determinístico por `fonte` em ordem
+ *      alfabética ascendente. Nunca pela ordem de chegada no array: um
+ *      SELECT sem ORDER BY não garante ordem, e "ordem de chegada" não é
+ *      um critério de negócio — é um acidente de execução.
  *
  * Falhar explícito é requisito: `regraObrigatoria` lança
  * `RegraAusenteError` quando a chave não tem regra aplicável na data —
  * nunca devolve undefined (que viraria NaN no motor e geraria escala
- * ilegal silenciosamente).
+ * ilegal silenciosamente). Pelo mesmo motivo, `resolverRegras` valida o
+ * formato de TODAS as datas que manuseia (ctx.data e toda vigência das
+ * regras recebidas) e lança `FormatoDataInvalidoError` em vez de aceitar
+ * silenciosamente um formato fora de ISO "AAAA-MM-DD" — "20/01/2028" não
+ * pode cair no regime antigo sem erro só porque comparação de string
+ * lexicográfica "funcionou por acaso".
  *
  * Ver .superpowers/sdd/2026-11-19-escala-configuracao/task-2-brief.md.
  */
@@ -58,11 +69,46 @@ export class RegraAusenteError extends Error {
   }
 }
 
+/**
+ * Lançado quando uma data (ctx.data ou a vigência de alguma regra) não
+ * está no formato ISO "AAAA-MM-DD". A resolução de vigência compara datas
+ * como string (lexicograficamente) — isso só é correto sob essa forma
+ * exata; qualquer outro formato ("20/01/2028", "2027-12-15T12:00:00Z")
+ * compara "por acaso" e pode devolver um resultado incorreto sem avisar.
+ */
+export class FormatoDataInvalidoError extends Error {
+  constructor(campo: string, valor: string) {
+    super(
+      `${campo} inválida: "${valor}" — esperado formato ISO "AAAA-MM-DD" (exatamente 10 caracteres, ex.: "2026-11-19").`,
+    );
+    this.name = "FormatoDataInvalidoError";
+  }
+}
+
 const PESO_ESCOPO: Record<Escopo, number> = {
   loja: 3,
   uf: 2,
   rede: 1,
 };
+
+const FORMATO_DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+function validarFormatoData(valor: string, campo: string): void {
+  if (typeof valor !== "string" || !FORMATO_DATA_ISO.test(valor)) {
+    throw new FormatoDataInvalidoError(campo, valor);
+  }
+}
+
+/** Normaliza UF para comparação: maiúsculas e sem espaços nas pontas.
+ * A tabela `stores` não tem coluna `uf` estruturada (só `location` de
+ * texto livre) — quem monta `ctx.uf` à mão pode mandar "sp", " SP " etc.
+ * Sem normalizar, isso não dá erro: simplesmente não casa com a regra de
+ * UF e cai, em silêncio, para a regra de rede — valor errado, não
+ * ausência. Normalizamos os dois lados (ctx e regra) pelo mesmo motivo. */
+function normalizarUf(uf: string | null | undefined): string | null {
+  if (uf === null || uf === undefined) return null;
+  return uf.trim().toUpperCase();
+}
 
 function escopoDaRegra(regra: RegraSeed): Escopo {
   if (regra.storeId !== null && regra.storeId !== undefined) return "loja";
@@ -87,15 +133,18 @@ function aplicaAoContexto(regra: RegraSeed, ctx: ContextoResolucao): boolean {
   if (regra.storeId !== null && regra.storeId !== undefined && regra.storeId !== ctx.storeId) {
     return false;
   }
-  if (regra.uf !== null && regra.uf !== undefined && regra.uf !== ctx.uf) {
+  const ufRegra = normalizarUf(regra.uf);
+  if (ufRegra !== null && ufRegra !== normalizarUf(ctx.uf)) {
     return false;
   }
   return true;
 }
 
 /** Entre duas regras candidatas da mesma chave, decide qual vence:
- * maior peso de escopo; no empate, vigenciaInicio mais recente (null =
- * "sempre", portanto o mais antigo possível). */
+ * (1) maior peso de escopo; (2) no empate, vigenciaInicio mais recente
+ * (null = "sempre", portanto o mais antigo possível); (3) no empate
+ * total — mesmo escopo E mesma vigenciaInicio —, `fonte` em ordem
+ * alfabética ascendente, nunca a ordem de chegada no array. */
 function vence(candidata: RegraSeed, atual: RegraSeed): boolean {
   const pesoCandidata = PESO_ESCOPO[escopoDaRegra(candidata)];
   const pesoAtual = PESO_ESCOPO[escopoDaRegra(atual)];
@@ -103,7 +152,31 @@ function vence(candidata: RegraSeed, atual: RegraSeed): boolean {
 
   const inicioCandidata = candidata.vigenciaInicio ?? "";
   const inicioAtual = atual.vigenciaInicio ?? "";
-  return inicioCandidata > inicioAtual;
+  if (inicioCandidata !== inicioAtual) return inicioCandidata > inicioAtual;
+
+  return candidata.fonte < atual.fonte;
+}
+
+/** Clona profundamente e congela `valor` antes de devolvê-lo em
+ * `RegraResolvida`. Sem isso, o chamador recebe uma referência direta ao
+ * objeto do seed/regra original (comum em chaves como
+ * `intervalo_intrajornada`, cujo valor é um objeto) — mutar o resultado
+ * mutaria o seed e envenenaria toda resolução seguinte no mesmo
+ * processo. Clone resolve o aliasing; freeze é defesa extra para o
+ * próprio clone não ser mutado em silêncio por quem o recebeu. */
+function clonarValorImutavel(valor: unknown): unknown {
+  if (valor === null || typeof valor !== "object") return valor;
+  const clone = structuredClone(valor);
+  congelarProfundo(clone);
+  return clone;
+}
+
+function congelarProfundo(valor: unknown): void {
+  if (valor === null || typeof valor !== "object" || Object.isFrozen(valor)) return;
+  Object.freeze(valor);
+  for (const chave of Object.keys(valor as Record<string, unknown>)) {
+    congelarProfundo((valor as Record<string, unknown>)[chave]);
+  }
 }
 
 /**
@@ -115,6 +188,16 @@ export function resolverRegras(
   regras: RegraSeed[],
   ctx: ContextoResolucao,
 ): Map<string, RegraResolvida> {
+  validarFormatoData(ctx.data, "ctx.data");
+  for (const r of regras) {
+    if (r.vigenciaInicio !== null) {
+      validarFormatoData(r.vigenciaInicio, `vigenciaInicio da regra "${r.chave}"`);
+    }
+    if (r.vigenciaFim !== null) {
+      validarFormatoData(r.vigenciaFim, `vigenciaFim da regra "${r.chave}"`);
+    }
+  }
+
   const candidatas = regras.filter((r) => vigeEmData(r, ctx.data) && aplicaAoContexto(r, ctx));
 
   const melhorPorChave = new Map<string, RegraSeed>();
@@ -129,7 +212,7 @@ export function resolverRegras(
   for (const [chave, regra] of Array.from(melhorPorChave.entries())) {
     resultado.set(chave, {
       chave,
-      valor: regra.valor,
+      valor: clonarValorImutavel(regra.valor),
       tipo: regra.tipo,
       fonte: regra.fonte,
       escopo: escopoDaRegra(regra),
