@@ -19,6 +19,7 @@ import {
   funcoesLoja,
   escalasCatalogo,
   regrasEscala,
+  confirmacoesRegraLoja,
   type EscalaCatalogoRow,
   type InsertFuncaoLoja,
   type RegraEscalaRow,
@@ -295,6 +296,51 @@ export async function upsertRegraLoja(storeId: number, data: UpsertRegraLojaInpu
     vigenciaFim: data.vigenciaFim ?? null,
     fonte: data.fonte,
   });
+}
+
+// ─── Confirmações de regra DEPENDE_CCT por loja (confirmacoes_regra_loja) ────
+//
+// R24 (revisão da Task 6, .superpowers/sdd/2026-11-19-escala-configuracao/):
+// a versão anterior "confirmava" uma `DEPENDE_CCT` chamando `upsertRegraLoja`
+// com a MESMA chave/valor em escopo loja — e por precedência (Task 2,
+// escala-regras.ts: loja > uf > rede), essa cópia venceria PARA SEMPRE,
+// inclusive depois que a regra de rede mudasse (a EC 141/2026 tem duas
+// viradas programadas: 16/12/2026 e 16/12/2027). Esta tabela é o caminho de
+// menor acoplamento pedido pelo controlador: registra só QUE o gerente
+// confirmou uma chave para a loja dele — nunca o valor legal. Sem coluna
+// `valor`/`tipo`/`vigencia` de propósito: duplicar o valor aqui criaria um
+// segundo lugar pra ficar desatualizado em silêncio, exatamente o defeito
+// que este plano existe para evitar. `resolverRegras` NUNCA lê esta tabela —
+// nenhuma query de resolução a consulta (ver drizzle/schema.ts e a migration
+// 0034 para o mesmo argumento).
+
+/** Marca `chave` como confirmada para `storeId` — idempotente (confirmar de
+ * novo só atualiza `confirmadoEm`, não cria linha duplicada). */
+export async function confirmarRegraLoja(storeId: number, chave: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db
+    .insert(confirmacoesRegraLoja)
+    .values({ storeId, chave })
+    .onConflictDoUpdate({
+      target: [confirmacoesRegraLoja.storeId, confirmacoesRegraLoja.chave],
+      set: { confirmadoEm: new Date() },
+    });
+}
+
+/** Chaves que esta loja já confirmou — usado só para a tela decidir o que
+ * ainda está pendente (`client/src/lib/escala-assistente.ts`,
+ * `regrasPendentesDeConfirmacao`). NUNCA consultado por `resolverRegras`:
+ * a resolução de regras continua vendo só `regras_escala`, sem saber que
+ * esta tabela existe. */
+export async function getChavesConfirmadas(storeId: number): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ chave: confirmacoesRegraLoja.chave })
+    .from(confirmacoesRegraLoja)
+    .where(eq(confirmacoesRegraLoja.storeId, storeId));
+  return rows.map((r) => r.chave);
 }
 
 // ─── Catálogo legal (escalas_catalogo) ────────────────────────────────────────

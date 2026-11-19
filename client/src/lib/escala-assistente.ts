@@ -97,22 +97,31 @@ function validarDataIso(valor: string, campo: string): void {
  * As regras `DEPENDE_CCT` existem porque dependem da convenção coletiva de
  * cada praça (ex.: quantos domingos de folga por mês) — o gerente CONFIRMA
  * que o valor do catálogo de rede vale para a loja dele; ele não edita o
- * valor legal. "Confirmar" é salvar uma regra de escopo LOJA com a mesma
- * chave (via `escala.salvarRegraLoja`) — a partir daí `resolverRegras`
- * (Task 2: loja > uf > rede) passa a devolver essa regra com `escopo:
- * "loja"` para esta loja, e ela sai da lista de pendentes.
+ * valor legal.
  *
- * Uma regra DEPENDE_CCT ainda resolvida com escopo "uf" ou "rede" é, por
- * definição, ainda NÃO confirmada por este gerente — mesmo que o VALOR
- * mostrado na tela seja idêntico ao que ele confirmaria. Tratar "mesmo
- * valor" como "já confirmado" seria o mesmo defeito que este plano existe
- * para evitar: uma regra apresentada como resolvida quando, na verdade,
- * ninguém desta loja decidiu nada ainda.
+ * 🔴 R24 (revisão da Task 6) — "confirmar" NÃO pode gravar uma cópia da
+ * regra em escopo loja. A primeira versão desta função decidia pendência
+ * por `regra.escopo !== "loja"`, e "confirmar" chamava
+ * `escala.salvarRegraLoja` com a MESMA chave/valor em escopo loja. Por
+ * precedência (Task 2, `escala-regras.ts`: loja > uf > rede), essa cópia
+ * venceria PARA SEMPRE — inclusive depois que a regra de rede mudasse (a
+ * EC 141/2026 tem duas viradas programadas: 16/12/2026 e 16/12/2027). Toda
+ * loja que confirmasse hoje ficaria presa no valor antigo quando o teto
+ * cair. Corrigido: confirmação é um registro SEPARADO (`chavesConfirmadas`,
+ * vindo de `escala.getRegrasVigentes` → tabela `confirmacoes_regra_loja`,
+ * que `resolverRegras` nunca lê) — nunca uma regra concorrente. Por isso
+ * esta função não olha mais `escopo`: uma chave pendente é simplesmente
+ * `DEPENDE_CCT` cuja chave não está em `chavesConfirmadas`, e o VALOR
+ * mostrado continua sendo o que `regras` resolveu AGORA — se a regra de
+ * rede mudar, `regras` muda, e a confirmação (que não guarda valor nenhum)
+ * não trava nada.
  */
 export function regrasPendentesDeConfirmacao(
-  regras: readonly RegraResolvidaLike[]
+  regras: readonly RegraResolvidaLike[],
+  chavesConfirmadas: ReadonlySet<string> | readonly string[]
 ): RegraResolvidaLike[] {
-  return regras.filter((regra) => regra.tipo === "DEPENDE_CCT" && regra.escopo !== "loja");
+  const confirmadas = chavesConfirmadas instanceof Set ? chavesConfirmadas : new Set(chavesConfirmadas);
+  return regras.filter((regra) => regra.tipo === "DEPENDE_CCT" && !confirmadas.has(regra.chave));
 }
 
 // ─── Passo 1-4: avaliação de completude ───────────────────────────────────────
@@ -144,6 +153,20 @@ export interface QueryEstado<T> {
 export interface HorarioFuncionamento {
   operationStartHour: number;
   operationEndHour: number;
+  /**
+   * 🔴 R23 (revisão da Task 6) — `true` só quando existe uma LINHA de
+   * verdade em `store_people_config` para esta loja (vinda de
+   * `pessoas.getConfig` → campo `configurado`). Sem este sinal, uma loja
+   * que nunca configurou nada mostra os DEFAULTS do servidor (8h–23h) —
+   * valores numericamente válidos — e o passo aparecia "Completo" sem o
+   * gerente ter decidido nada. É literalmente "passo marcado como
+   * completo quando não está", o primeiro item da lista de defeitos a
+   * evitar deste plano. Os valores numéricos isolados são indistinguíveis
+   * entre "ninguém configurou" e "configurou e bateu com o default por
+   * coincidência" — por isso a completude do passo nunca pode depender só
+   * deles.
+   */
+  configurado: boolean;
 }
 
 export interface BlocoTurno {
@@ -156,6 +179,10 @@ export interface FuncaoLoja {
 
 export interface RegrasVigentesResposta {
   regras: readonly RegraResolvidaLike[];
+  /** R24: chaves que esta loja já confirmou (`confirmacoes_regra_loja`,
+   * via `escala.getRegrasVigentes`) — nunca usado por `resolverRegras`,
+   * só para decidir pendência nesta tela. */
+  chavesConfirmadas: readonly string[];
   avisoUfAusente: boolean;
   aviso: string | null;
 }
@@ -181,7 +208,7 @@ function avaliarHorario(estado: QueryEstado<HorarioFuncionamento>): AvaliacaoPas
       avisoExtra: null,
     };
   }
-  const { operationStartHour, operationEndHour } = estado.data;
+  const { operationStartHour, operationEndHour, configurado } = estado.data;
   const valoresValidos =
     Number.isFinite(operationStartHour) &&
     Number.isFinite(operationEndHour) &&
@@ -193,6 +220,19 @@ function avaliarHorario(estado: QueryEstado<HorarioFuncionamento>): AvaliacaoPas
       titulo,
       completo: false,
       razao: `O horário de funcionamento cadastrado é inválido (abertura ${operationStartHour}h, fechamento ${operationEndHour}h) — o fechamento precisa ser depois da abertura.`,
+      avisoExtra: null,
+    };
+  }
+  // 🔴 R23: sem `configurado`, 8h–23h (default do servidor) passaria por
+  // "válido" e o passo apareceria completo numa loja que nunca salvou
+  // nada. `configurado` é o único sinal confiável de "existe uma linha" —
+  // nunca inferir isso a partir dos valores numéricos.
+  if (!configurado) {
+    return {
+      passo: "horario",
+      titulo,
+      completo: false,
+      razao: `Esta loja ainda não confirmou o horário de funcionamento — os valores mostrados (${operationStartHour}h–${operationEndHour}h) são o padrão do sistema, não uma configuração salva. Ajuste se necessário e salve.`,
       avisoExtra: null,
     };
   }
@@ -277,7 +317,7 @@ function avaliarRegras(estado: QueryEstado<RegrasVigentesResposta>): AvaliacaoPa
   // engolido — precisa aparecer na tela independente do passo estar
   // completo ou não.
   const avisoExtra = avisoUfParaExibir(estado.data);
-  const pendentes = regrasPendentesDeConfirmacao(estado.data.regras);
+  const pendentes = regrasPendentesDeConfirmacao(estado.data.regras, estado.data.chavesConfirmadas);
   if (pendentes.length > 0) {
     const chaves = pendentes.map((p) => p.chave).join(", ");
     return {

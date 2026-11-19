@@ -6,6 +6,15 @@
  * `regrasPendentesDeConfirmacao`. Roda em `environment: "node"`
  * (vitest.config.ts — sem jsdom/RTL, ver ruling R19 em task-6-brief.md):
  * zero React aqui, só lógica.
+ *
+ * R23 e R24 (revisão da Task 6) — dois blocos de teste novos/reescritos:
+ *  - R23: o passo de horário só é completo com `configurado: true` — os
+ *    defaults do servidor (valores numericamente válidos) não bastam.
+ *  - R24: confirmar uma `DEPENDE_CCT` é uma entrada SEPARADA
+ *    (`chavesConfirmadas`), nunca inferida do `escopo` da regra resolvida
+ *    — e o cenário central do achado: confirmar não trava o valor; quando
+ *    a regra de rede muda, o passo continua completo (a chave continua
+ *    confirmada) mas o VALOR mostrado é o novo, não o antigo.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -34,13 +43,14 @@ function regraRede(overrides: Partial<RegraResolvidaLike> = {}): RegraResolvidaL
 
 function estadoCompleto(): EstadoAssistente {
   return {
-    horario: { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23 } },
+    horario: { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: true } },
     blocos: { isLoading: false, data: [{ id: 1 }, { id: 2 }] },
     funcoes: { isLoading: false, data: [{ id: 1 }] },
     regras: {
       isLoading: false,
       data: {
         regras: [regraRede({ tipo: "DURA", escopo: "rede" })],
+        chavesConfirmadas: [],
         avisoUfAusente: false,
         aviso: null,
       },
@@ -98,9 +108,26 @@ describe("avaliarPassos", () => {
 
   it("marca horário como incompleto quando fechamento não é depois da abertura", () => {
     const estado = estadoCompleto();
-    estado.horario = { isLoading: false, data: { operationStartHour: 10, operationEndHour: 10 } };
+    estado.horario = { isLoading: false, data: { operationStartHour: 10, operationEndHour: 10, configurado: true } };
     const [horario] = avaliarPassos(estado);
     expect(horario.completo).toBe(false);
+  });
+
+  // 🔴 R23 — o achado mais direto da revisão: defaults válidos não são
+  // configuração.
+  it("R23: marca horário como INCOMPLETO quando configurado=false, mesmo com valores numéricos válidos (defaults do servidor)", () => {
+    const estado = estadoCompleto();
+    estado.horario = { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: false } };
+    const [horario] = avaliarPassos(estado);
+    expect(horario.completo).toBe(false);
+    expect(horario.razao).toMatch(/ainda não confirmou|padrão/i);
+  });
+
+  it("R23: marca horário como COMPLETO quando configurado=true e os valores são válidos", () => {
+    const estado = estadoCompleto();
+    estado.horario = { isLoading: false, data: { operationStartHour: 7, operationEndHour: 22, configurado: true } };
+    const [horario] = avaliarPassos(estado);
+    expect(horario.completo).toBe(true);
   });
 
   it("marca blocos como incompleto quando não há nenhum bloco cadastrado", () => {
@@ -125,6 +152,7 @@ describe("avaliarPassos", () => {
       isLoading: false,
       data: {
         regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede" })],
+        chavesConfirmadas: [],
         avisoUfAusente: false,
         aviso: null,
       },
@@ -136,12 +164,13 @@ describe("avaliarPassos", () => {
     expect(regras.razao).toContain("domingos_folga_mulher_mes");
   });
 
-  it("marca o passo de regras como completo quando a DEPENDE_CCT já foi confirmada (escopo loja)", () => {
+  it("marca o passo de regras como completo quando a DEPENDE_CCT já está em chavesConfirmadas", () => {
     const estado = estadoCompleto();
     estado.regras = {
       isLoading: false,
       data: {
-        regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "loja" })],
+        regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede" })],
+        chavesConfirmadas: ["domingos_folga_mulher_mes"],
         avisoUfAusente: false,
         aviso: null,
       },
@@ -150,12 +179,53 @@ describe("avaliarPassos", () => {
     expect(passos[3].completo).toBe(true);
   });
 
+  // 🔴 R24 — o cenário central do achado: confirmar não pode travar o
+  // valor. A regra de rede muda (valor 2 → 3, ex.: a CCT nova exige mais
+  // domingos de folga) mas a chave continua confirmada — o passo continua
+  // completo, e quem lê `passos[3]` nunca vê o valor antigo em lugar
+  // nenhum (esta função nem carrega valor — só decide completude; o valor
+  // exibido pela tela vem direto de `regras`, que já é o novo).
+  it("R24: a chave continua confirmada quando a regra de rede muda de valor — a confirmação não trava o valor antigo", () => {
+    const estadoAntes = estadoCompleto();
+    estadoAntes.regras = {
+      isLoading: false,
+      data: {
+        regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede", valor: 2 })],
+        chavesConfirmadas: ["domingos_folga_mulher_mes"],
+        avisoUfAusente: false,
+        aviso: null,
+      },
+    };
+    const passosAntes = avaliarPassos(estadoAntes);
+    expect(passosAntes[3].completo).toBe(true);
+
+    // A regra de rede "mudou" (EC 141 em ação): mesma chave, valor novo,
+    // ainda escopo rede — `chavesConfirmadas` não mudou (ninguém reconfirmou
+    // nada), e mesmo assim o passo continua completo.
+    const estadoDepois = estadoCompleto();
+    estadoDepois.regras = {
+      isLoading: false,
+      data: {
+        regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede", valor: 3 })],
+        chavesConfirmadas: ["domingos_folga_mulher_mes"],
+        avisoUfAusente: false,
+        aviso: null,
+      },
+    };
+    const passosDepois = avaliarPassos(estadoDepois);
+    expect(passosDepois[3].completo).toBe(true);
+    // E a regra que o resolvedor devolveu para este estado é a NOVA (valor
+    // 3) — prova de que nada nesta função fixou o valor 2 em lugar algum.
+    expect(estadoDepois.regras.data!.regras[0].valor).toBe(3);
+  });
+
   it("nunca engole o aviso de UF ausente — aparece mesmo com o passo de regras completo", () => {
     const estado = estadoCompleto();
     estado.regras = {
       isLoading: false,
       data: {
         regras: [regraRede({ tipo: "DURA", escopo: "rede" })],
+        chavesConfirmadas: [],
         avisoUfAusente: true,
         aviso: "Esta loja não tem estado (UF) cadastrado; regras estaduais não estão sendo aplicadas — somente as regras de rede.",
       },
@@ -172,6 +242,7 @@ describe("avaliarPassos", () => {
       isLoading: false,
       data: {
         regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede" })],
+        chavesConfirmadas: [],
         avisoUfAusente: true,
         aviso: "Esta loja não tem estado (UF) cadastrado; regras estaduais não estão sendo aplicadas — somente as regras de rede.",
       },
@@ -207,10 +278,17 @@ describe("podeGerarEscala", () => {
       isLoading: false,
       data: {
         regras: [regraRede({ tipo: "DEPENDE_CCT", escopo: "rede" })],
+        chavesConfirmadas: [],
         avisoUfAusente: false,
         aviso: null,
       },
     };
+    expect(podeGerarEscala(avaliarPassos(estado))).toBe(false);
+  });
+
+  it("R23: não libera com o horário usando defaults não confirmados (configurado=false)", () => {
+    const estado = estadoCompleto();
+    estado.horario = { isLoading: false, data: { operationStartHour: 8, operationEndHour: 23, configurado: false } };
     expect(podeGerarEscala(avaliarPassos(estado))).toBe(false);
   });
 });
@@ -218,25 +296,39 @@ describe("podeGerarEscala", () => {
 // ─── regrasPendentesDeConfirmacao ───────────────────────────────────────────
 
 describe("regrasPendentesDeConfirmacao", () => {
-  it("inclui DEPENDE_CCT com escopo rede ou uf", () => {
+  it("inclui DEPENDE_CCT cuja chave NÃO está em chavesConfirmadas", () => {
     const regras = [
       regraRede({ chave: "a", tipo: "DEPENDE_CCT", escopo: "rede" }),
       regraRede({ chave: "b", tipo: "DEPENDE_CCT", escopo: "uf" }),
     ];
-    expect(regrasPendentesDeConfirmacao(regras).map((r) => r.chave)).toEqual(["a", "b"]);
+    expect(regrasPendentesDeConfirmacao(regras, []).map((r) => r.chave)).toEqual(["a", "b"]);
   });
 
-  it("exclui DEPENDE_CCT já confirmada (escopo loja)", () => {
-    const regras = [regraRede({ chave: "a", tipo: "DEPENDE_CCT", escopo: "loja" })];
-    expect(regrasPendentesDeConfirmacao(regras)).toEqual([]);
+  it("exclui DEPENDE_CCT cuja chave está em chavesConfirmadas", () => {
+    const regras = [regraRede({ chave: "a", tipo: "DEPENDE_CCT", escopo: "rede" })];
+    expect(regrasPendentesDeConfirmacao(regras, ["a"])).toEqual([]);
   });
 
-  it("exclui regras DURA e MOLE, mesmo com escopo rede/uf", () => {
+  it("exclui regras DURA e MOLE, mesmo sem estarem em chavesConfirmadas", () => {
     const regras = [
       regraRede({ chave: "a", tipo: "DURA", escopo: "rede" }),
       regraRede({ chave: "b", tipo: "MOLE", escopo: "uf" }),
     ];
-    expect(regrasPendentesDeConfirmacao(regras)).toEqual([]);
+    expect(regrasPendentesDeConfirmacao(regras, [])).toEqual([]);
+  });
+
+  it("aceita um Set em vez de array para chavesConfirmadas", () => {
+    const regras = [regraRede({ chave: "a", tipo: "DEPENDE_CCT", escopo: "rede" })];
+    expect(regrasPendentesDeConfirmacao(regras, new Set(["a"]))).toEqual([]);
+  });
+
+  // 🔴 R24 — não existe mais caminho para "escopo loja" significar
+  // confirmado: só `chavesConfirmadas` decide. Uma regra resolvida em
+  // escopo loja (ex.: uma MOLE que a própria loja cadastrou por outro
+  // motivo, nada a ver com confirmação) não é, por si só, uma confirmação.
+  it("R24: escopo 'loja' sozinho NÃO confirma nada — só chavesConfirmadas decide", () => {
+    const regras = [regraRede({ chave: "a", tipo: "DEPENDE_CCT", escopo: "loja" })];
+    expect(regrasPendentesDeConfirmacao(regras, []).map((r) => r.chave)).toEqual(["a"]);
   });
 });
 

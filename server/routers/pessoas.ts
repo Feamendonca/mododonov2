@@ -48,14 +48,28 @@ export const pessoasRouter = router({
     .query(async ({ ctx, input }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);
       const config = await getStorePeopleConfig(input.storeId);
-      return config ?? {
-        storeId: input.storeId,
-        chargesPercent: DEFAULT_CHARGES,
-        productivityTarget: DEFAULT_PRODUCTIVITY_TARGET,
-        payrollTargetPercent: 18,
-        hiringCost: 1500,
-        operationStartHour: 8,
-        operationEndHour: 23,
+      return {
+        ...(config ?? {
+          storeId: input.storeId,
+          chargesPercent: DEFAULT_CHARGES,
+          productivityTarget: DEFAULT_PRODUCTIVITY_TARGET,
+          payrollTargetPercent: 18,
+          hiringCost: 1500,
+          operationStartHour: 8,
+          operationEndHour: 23,
+        }),
+        // R23 (revisão da Task 6, módulo de Escala): sinaliza se existe
+        // uma linha de verdade em `store_people_config`, para distinguir
+        // "ninguém configurou ainda" (usando os defaults abaixo) de "o
+        // gerente salvou e os valores batem com o default por
+        // coincidência" — os campos numéricos isolados são indistinguíveis
+        // entre os dois casos. O assistente de configuração
+        // (client/src/components/escala/AssistenteConfiguracao.tsx) usa
+        // este campo para decidir se o passo de horário de funcionamento
+        // está de fato completo; os outros consumidores desta procedure
+        // (MapaCalor, Quadro, Escala, Análise, Movimentações) continuam
+        // usando só os campos numéricos, como antes.
+        configurado: config !== null,
       };
     }),
 

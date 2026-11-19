@@ -18,9 +18,11 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { assertPodeAcessarLoja } from "../auth-helpers";
 import { getStoreById } from "../db";
 import {
+  confirmarRegraLoja,
   createFuncao,
   desativarFuncao,
   getCatalogoVigente,
+  getChavesConfirmadas,
   getFuncoes,
   getRegras,
   RegraLojaNaoPermitidaError,
@@ -131,7 +133,15 @@ export const escalaRouter = router({
       const uf = normalizarUf(store?.uf);
       const avisoUfAusente = uf === null;
 
-      const candidatas = await getRegras(input.storeId, uf);
+      const [candidatas, chavesConfirmadas] = await Promise.all([
+        getRegras(input.storeId, uf),
+        // R24: só LÊ a lista de chaves já confirmadas por esta loja — não
+        // entra na resolução. `resolvidas` abaixo não sabe que esta tabela
+        // existe; a tela que decide o que mostrar como "pendente" ou
+        // "confirmada" (regrasPendentesDeConfirmacao, em
+        // client/src/lib/escala-assistente.ts).
+        getChavesConfirmadas(input.storeId),
+      ]);
       const resolvidas = resolverRegras(candidatas, {
         storeId: input.storeId,
         // ContextoResolucao.uf é string (não aceita null) — "" nunca bate
@@ -143,6 +153,10 @@ export const escalaRouter = router({
 
       return {
         regras: Array.from(resolvidas.values()),
+        // R24: quais chaves (DEPENDE_CCT ou não) esta loja já confirmou —
+        // nunca influencia `resolvidas` acima, só acompanha a resposta
+        // para a tela decidir pendência sem uma segunda chamada.
+        chavesConfirmadas,
         // 🔴 R13: a ausência de UF NUNCA pode ser silenciosa — a tela
         // precisa deste campo pra avisar o gestor, não só devolver menos
         // regras sem dizer por quê.
@@ -186,6 +200,22 @@ export const escalaRouter = router({
         }
         throw erro;
       }
+      return { success: true };
+    }),
+
+  // R24 (revisão da Task 6): confirmar uma regra `DEPENDE_CCT` NÃO é
+  // `salvarRegraLoja` — isso gravaria uma cópia em escopo loja que, por
+  // precedência (Task 2: loja > uf > rede), venceria PARA SEMPRE mesmo
+  // depois que a regra de rede mudasse (a EC 141/2026 tem duas viradas
+  // programadas: 16/12/2026 e 16/12/2027). Esta procedure só grava "o
+  // gerente confirmou esta chave" em `confirmacoes_regra_loja` — tabela
+  // separada, nunca lida por `resolverRegras`. Nenhum valor legal passa
+  // por aqui.
+  confirmarRegraLoja: protectedProcedure
+    .input(z.object({ storeId: z.number(), chave: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      await assertPodeAcessarLoja(ctx, input.storeId);
+      await confirmarRegraLoja(input.storeId, input.chave);
       return { success: true };
     }),
 

@@ -1022,3 +1022,30 @@ export const regrasEscala = pgTable("regras_escala", {
 }));
 export type RegraEscalaRow = typeof regrasEscala.$inferSelect;
 export type InsertRegraEscala = typeof regrasEscala.$inferInsert;
+
+// ─── Escala — Confirmações de regra DEPENDE_CCT por loja — migration 0034 ───
+// R24 (revisão da Task 6, .superpowers/sdd/2026-11-19-escala-configuracao/):
+// "confirmar" uma regra DEPENDE_CCT (ex.: domingos de folga por mês) NÃO
+// pode gravar uma cópia da regra em `regras_escala` com escopo loja — por
+// precedência (Task 2, escala-regras.ts: loja > uf > rede), essa cópia
+// venceria PARA SEMPRE, inclusive depois que a regra de rede mudasse (a
+// EC 141/2026 tem duas viradas programadas: 16/12/2026 e 16/12/2027). Esta
+// tabela existe só para registrar QUE o gerente confirmou uma chave para a
+// loja dele — nunca o VALOR. Ela não guarda `valor`/`tipo`/`vigencia`
+// porque isso duplicaria o dado legal em dois lugares, e um dos dois
+// ficaria desatualizado em silêncio — o mesmo defeito que este plano
+// existe para evitar, só que num lugar novo.
+//
+// `resolverRegras` (Task 2) NUNCA lê esta tabela — nenhuma query de
+// resolução a consulta. Quando a regra de rede mudar, o resolvedor
+// devolve o valor novo automaticamente; esta tabela não entra na conta.
+export const confirmacoesRegraLoja = pgTable("confirmacoes_regra_loja", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  chave: varchar("chave", { length: 64 }).notNull(),
+  confirmadoEm: timestamp("confirmadoEm").defaultNow().notNull(),
+}, (t) => ({
+  uqConfirmacaoRegraLoja: uniqueIndex("uq_confirmacoes_regra_loja_store_chave").on(t.storeId, t.chave),
+}));
+export type ConfirmacaoRegraLojaRow = typeof confirmacoesRegraLoja.$inferSelect;
+export type InsertConfirmacaoRegraLoja = typeof confirmacoesRegraLoja.$inferInsert;

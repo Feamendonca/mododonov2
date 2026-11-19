@@ -47,6 +47,12 @@ vi.mock("./db-escala-config", async () => {
     upsertRegraLoja: vi.fn(),
     getCatalogoVigente: vi.fn(),
     sugerirProdutividade: vi.fn(),
+    // R24 (revisão da Task 6): confirmar uma DEPENDE_CCT passou a usar
+    // esta tabela separada (confirmacoes_regra_loja), nunca
+    // `upsertRegraLoja` — mockadas à parte para o teste dedicado provar
+    // que `confirmarRegraLoja` (procedure) nunca toca `upsertRegraLoja`.
+    confirmarRegraLoja: vi.fn(),
+    getChavesConfirmadas: vi.fn(),
     RegraLojaNaoPermitidaError: real.RegraLojaNaoPermitidaError,
   };
 });
@@ -67,6 +73,8 @@ const DB_MOCK_FNS = [
   dbEscalaConfig.upsertRegraLoja,
   dbEscalaConfig.getCatalogoVigente,
   dbEscalaConfig.sugerirProdutividade,
+  dbEscalaConfig.confirmarRegraLoja,
+  dbEscalaConfig.getChavesConfirmadas,
 ];
 
 // ─── Fixtures de contexto tRPC ────────────────────────────────────────────────
@@ -112,6 +120,8 @@ beforeEach(() => {
   (dbEscalaConfig.upsertRegraLoja as any).mockResolvedValue(undefined);
   (dbEscalaConfig.getCatalogoVigente as any).mockResolvedValue([]);
   (dbEscalaConfig.sugerirProdutividade as any).mockResolvedValue({ valor: null, amostras: 0 });
+  (dbEscalaConfig.confirmarRegraLoja as any).mockResolvedValue(undefined);
+  (dbEscalaConfig.getChavesConfirmadas as any).mockResolvedValue([]);
 });
 
 // ─── Entradas mínimas válidas por procedure (pra exercitar o handler até o
@@ -142,6 +152,9 @@ const ENTRADA_VALIDA: Record<string, (storeId: number) => Record<string, unknown
   // entrada mínima válida do caso MAIS COMUM (função ainda não criada)
   // não leva `funcaoId`, só `driver`.
   sugerirProdutividade: (storeId) => ({ storeId, driver: "tickets" }),
+  // R24 (revisão da Task 6): procedure nova, substitui o uso de
+  // `salvarRegraLoja` para confirmar uma DEPENDE_CCT.
+  confirmarRegraLoja: (storeId) => ({ storeId, chave: "domingos_folga_mulher_mes" }),
 };
 
 // ─── Teste genérico: TODA procedure chama assertPodeAcessarLoja ──────────────
@@ -571,5 +584,105 @@ describe("escala.getRegrasVigentes — R13: aviso de UF ausente", () => {
     expect(result.avisoUfAusente).toBe(false);
     expect(result.aviso).toBeNull();
     expect(dbEscalaConfig.getRegras).toHaveBeenCalledWith(1, "SP");
+  });
+
+  // R24 (revisão da Task 6): a resposta agora leva `chavesConfirmadas`,
+  // vindo de `getChavesConfirmadas` — uma leitura paralela a `getRegras`,
+  // nunca usada para resolver nada (resolverRegras só recebe `candidatas`).
+  it("R24: devolve chavesConfirmadas a partir de getChavesConfirmadas, sem alterar a resolução", async () => {
+    (dbEscalaConfig.getChavesConfirmadas as any).mockResolvedValue(["domingos_folga_mulher_mes"]);
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    const result = await caller.getRegrasVigentes({ storeId: 1, data: "2026-11-19" });
+
+    expect(result.chavesConfirmadas).toEqual(["domingos_folga_mulher_mes"]);
+    expect(dbEscalaConfig.getChavesConfirmadas).toHaveBeenCalledWith(1);
+  });
+});
+
+// ─── R24: confirmar uma DEPENDE_CCT não pode criar regra concorrente ────────
+//
+// Achado do controlador: a versão anterior confirmava chamando
+// `upsertRegraLoja` com a MESMA chave/valor em escopo loja — por
+// precedência (Task 2: loja > uf > rede), essa cópia venceria PARA SEMPRE,
+// inclusive depois que a regra de rede mudasse (a EC 141/2026 tem duas
+// viradas programadas: 16/12/2026 e 16/12/2027). A procedure nova
+// (`confirmarRegraLoja`) só grava "o gerente confirmou esta chave" numa
+// tabela separada — nunca toca `regras_escala`/`upsertRegraLoja`.
+
+describe("escala.confirmarRegraLoja — R24: registra confirmação sem criar regra concorrente", () => {
+  it("chama dbEscalaConfig.confirmarRegraLoja(storeId, chave) — nada mais", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    await expect(
+      caller.confirmarRegraLoja({ storeId: 1, chave: "domingos_folga_mulher_mes" })
+    ).resolves.toEqual({ success: true });
+
+    expect(dbEscalaConfig.confirmarRegraLoja).toHaveBeenCalledWith(1, "domingos_folga_mulher_mes");
+  });
+
+  it("NUNCA chama upsertRegraLoja — confirmar não grava regra de escopo loja", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    await caller.confirmarRegraLoja({ storeId: 1, chave: "domingos_folga_mulher_mes" });
+
+    expect(dbEscalaConfig.upsertRegraLoja).not.toHaveBeenCalled();
+  });
+
+  it("rejeita chave vazia", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+    await expect(caller.confirmarRegraLoja({ storeId: 1, chave: "" })).rejects.toThrow();
+    expect(dbEscalaConfig.confirmarRegraLoja).not.toHaveBeenCalled();
+  });
+
+  // Prova de ponta a ponta do cenário pedido pelo controlador: confirmar
+  // uma chave, a regra de rede mudar de valor, e `getRegrasVigentes`
+  // devolver o valor NOVO — a confirmação nunca guarda/trava valor.
+  it("cenário completo: confirma a chave, a regra de rede muda de valor, getRegrasVigentes devolve a NOVA — não a confirmada", async () => {
+    const caller = escalaRouter.createCaller(ctxGerenteLoja1);
+
+    // 1) Gerente confirma hoje, com a regra de rede valendo 2.
+    (dbEscalaConfig.getRegras as any).mockResolvedValue([
+      {
+        storeId: null,
+        uf: null,
+        cct: null,
+        chave: "domingos_folga_mulher_mes",
+        valor: 2,
+        tipo: "DEPENDE_CCT",
+        vigenciaInicio: null,
+        vigenciaFim: null,
+        fonte: "CLT art. 386",
+      },
+    ]);
+    await caller.confirmarRegraLoja({ storeId: 1, chave: "domingos_folga_mulher_mes" });
+    expect(dbEscalaConfig.upsertRegraLoja).not.toHaveBeenCalled();
+
+    // 2) A regra de rede muda de valor (ex.: nova virada da EC 141) — a
+    // confirmação (passo 1) não escreveu nada em `regras_escala`, então
+    // não há nenhuma cópia antiga para competir com o valor novo.
+    (dbEscalaConfig.getRegras as any).mockResolvedValue([
+      {
+        storeId: null,
+        uf: null,
+        cct: null,
+        chave: "domingos_folga_mulher_mes",
+        valor: 3,
+        tipo: "DEPENDE_CCT",
+        vigenciaInicio: null,
+        vigenciaFim: null,
+        fonte: "CLT art. 386 (revisão)",
+      },
+    ]);
+    (dbEscalaConfig.getChavesConfirmadas as any).mockResolvedValue(["domingos_folga_mulher_mes"]);
+
+    const result = await caller.getRegrasVigentes({ storeId: 1, data: "2026-11-19" });
+
+    const regraDomingos = result.regras.find((r) => r.chave === "domingos_folga_mulher_mes");
+    expect(regraDomingos?.valor).toBe(3);
+    // E a chave continua marcada como confirmada — o gerente não precisa
+    // reconfirmar só porque o VALOR mudou, mas o valor que a tela mostra é
+    // sempre o resolvido agora, nunca o que valia quando ele confirmou.
+    expect(result.chavesConfirmadas).toContain("domingos_folga_mulher_mes");
   });
 });

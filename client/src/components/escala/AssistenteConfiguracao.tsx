@@ -24,14 +24,29 @@
  *
  * Passo 4 (regras): lista as regras legais vigentes (`escala.getRegrasVigentes`)
  * como SOMENTE-LEITURA — o gerente nunca edita o valor legal — e pede
- * confirmação explícita nas de tipo `DEPENDE_CCT`. "Confirmar" é salvar uma
- * regra de escopo LOJA com a MESMA chave e o MESMO valor via
- * `escala.salvarRegraLoja`: por precedência (Task 2: loja > uf > rede),
- * essa regra passa a resolver com `escopo: "loja"` para esta loja, e some
- * da lista de pendentes (`regrasPendentesDeConfirmacao`, em
- * `escala-assistente.ts`). O aviso de UF ausente (`avisoUfAusente`) é
- * mostrado SEMPRE que presente, independente do passo estar completo —
- * engolir esse aviso seria repetir o pior defeito deste plano (R13).
+ * confirmação explícita nas de tipo `DEPENDE_CCT`.
+ *
+ * 🔴 R24 (revisão da Task 6) — "confirmar" chama `escala.confirmarRegraLoja`,
+ * NÃO `escala.salvarRegraLoja`. A primeira versão confirmava salvando uma
+ * cópia da regra em escopo LOJA — por precedência (Task 2: loja > uf >
+ * rede), essa cópia venceria PARA SEMPRE, inclusive depois que a regra de
+ * rede mudasse (a EC 141/2026 tem duas viradas programadas: 16/12/2026 e
+ * 16/12/2027). `confirmarRegraLoja` só grava "o gerente confirmou esta
+ * chave" numa tabela separada (`confirmacoes_regra_loja`) que
+ * `resolverRegras` nunca lê — o valor exibido continua vindo, sempre, da
+ * resolução atual (`regrasQuery.data.regras`). Pendência vem de
+ * `chavesConfirmadas` (devolvido junto de `getRegrasVigentes`), não mais
+ * do `escopo` da regra resolvida.
+ *
+ * 🔴 R23 (revisão da Task 6) — o passo 1 só é completo quando
+ * `pessoas.getConfig` devolve `configurado: true` (existe linha em
+ * `store_people_config`). Os defaults do servidor (8h–23h) são valores
+ * numericamente válidos mas NÃO significam que o gerente configurou nada
+ * — sem este sinal, o passo apareceria "Completo" numa loja virgem.
+ *
+ * O aviso de UF ausente (`avisoUfAusente`) é mostrado SEMPRE que presente,
+ * independente do passo estar completo — engolir esse aviso seria repetir
+ * o pior defeito deste plano (R13).
  *
  * "Gerar escala" (Plano 3, ainda não existe): fica como um indicador
  * desabilitado, nunca clicável, com a razão agregada sempre visível —
@@ -177,7 +192,11 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
   const catalogoQuery = trpc.escala.getCatalogo.useQuery({ storeId, data: hoje }, { enabled: storeId > 0 });
   const regimesHoje = catalogoQuery.data ? escalasDisponiveis(catalogoQuery.data, hoje) : [];
   const regimesIndisponiveis = regimesHoje.filter((r) => !r.disponivel);
-  const confirmarRegraMut = trpc.escala.salvarRegraLoja.useMutation({
+
+  // R24: confirmar chama `confirmarRegraLoja` (tabela separada
+  // `confirmacoes_regra_loja`, nunca lida por `resolverRegras`) — NÃO
+  // `salvarRegraLoja`. Nenhum valor/tipo/vigência passa por aqui.
+  const confirmarRegraMut = trpc.escala.confirmarRegraLoja.useMutation({
     onSuccess: () => {
       utils.escala.getRegrasVigentes.invalidate({ storeId, data: hoje });
       toast.success("Regra confirmada para esta loja.");
@@ -186,18 +205,7 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
   });
 
   function confirmarRegra(regra: RegraResolvidaLike) {
-    // Confirmar NUNCA edita o valor legal — grava a MESMA chave/valor/tipo
-    // em escopo loja. Por precedência (Task 2), essa regra de loja passa a
-    // vencer a de rede/uf para esta loja, e sai da lista de pendentes.
-    confirmarRegraMut.mutate({
-      storeId,
-      chave: regra.chave,
-      valor: regra.valor,
-      tipo: regra.tipo,
-      vigenciaInicio: null,
-      vigenciaFim: null,
-      fonte: `Confirmado pelo gerente para esta loja em ${hoje} (regra de rede: ${regra.fonte}).`,
-    });
+    confirmarRegraMut.mutate({ storeId, chave: regra.chave });
   }
 
   // ── Avaliação dos 4 passos (lógica pura, testada em escala-assistente.test.ts) ──
@@ -205,7 +213,13 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
     horario: {
       isLoading: horarioQuery.isLoading,
       data: horarioQuery.data
-        ? { operationStartHour: horarioQuery.data.operationStartHour, operationEndHour: horarioQuery.data.operationEndHour }
+        ? {
+            operationStartHour: horarioQuery.data.operationStartHour,
+            operationEndHour: horarioQuery.data.operationEndHour,
+            // R23: só existe linha de verdade quando `configurado` vem
+            // true — nunca inferir isso a partir dos valores numéricos.
+            configurado: horarioQuery.data.configurado,
+          }
         : undefined,
     },
     blocos: { isLoading: blocosQuery.isLoading, data: blocosQuery.data },
@@ -215,7 +229,9 @@ export function AssistenteConfiguracao({ storeId }: { storeId: number }) {
 
   const passos = avaliarPassos(estado);
   const liberaGeracao = podeGerarEscala(passos);
-  const pendentes = regrasQuery.data ? regrasPendentesDeConfirmacao(regrasQuery.data.regras) : [];
+  const pendentes = regrasQuery.data
+    ? regrasPendentesDeConfirmacao(regrasQuery.data.regras, regrasQuery.data.chavesConfirmadas)
+    : [];
   const concluidos = passos.filter((p) => p.completo).length;
 
   return (
