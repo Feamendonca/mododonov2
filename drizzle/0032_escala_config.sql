@@ -83,4 +83,4 @@ CREATE TABLE IF NOT EXISTS regras_escala (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_regras_escala_store_chave_vigencia
-  ON regras_escala ("storeId", chave, "vigenciaInicio");
+  ON regras_escala ("storeId", uf, cct, chave, "vigenciaInicio");

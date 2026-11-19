@@ -10,6 +10,7 @@ import {
   toInsertCatalogo,
   toInsertRegra,
 } from "./escala-catalogo-seed";
+import type { RegraSeed } from "./escala-catalogo-seed";
 
 describe("CATALOGO_INICIAL", () => {
   it("6x1 encerra em 15/12/2026 por causa da EC 141", () => {
@@ -198,5 +199,67 @@ describe("toInsertCatalogo / toInsertRegra", () => {
       expect(insert.vigenciaInicio).toBe(seed.vigenciaInicio);
       expect(insert.vigenciaFim).toBe(seed.vigenciaFim);
     }
+  });
+});
+
+// ─── Unicidade de regras_escala cobre escopo uf/cct (R7) ──────────────────────
+// A constraint uq_regras_escala_store_chave_vigencia (drizzle/schema.ts e
+// drizzle/0032_escala_config.sql) é (storeId, uf, cct, chave, vigenciaInicio).
+// Antes era só (storeId, chave, vigenciaInicio): duas regras da mesma chave e
+// mesma vigência em UFs diferentes (ex.: domingos_folga_mulher_mes no RS e em
+// SP, cadastradas pela Task 4 — upsertRegraLoja/getRegras(storeId, uf)) seriam
+// rejeitadas indevidamente como duplicadas. Este teste prova, sem banco, que a
+// chave de unicidade distingue uf/cct e só colide quando as 5 colunas batem.
+function chaveUnicidadeRegra(r: Pick<RegraSeed, "storeId" | "uf" | "cct" | "chave" | "vigenciaInicio">): string {
+  return [r.storeId, r.uf, r.cct, r.chave, r.vigenciaInicio].map((v) => v ?? "null").join("|");
+}
+
+describe("unicidade de regras_escala cobre escopo uf/cct (R7)", () => {
+  it("mesma chave e mesma vigência, UF diferente (RS x SP) → chaves de unicidade distintas", () => {
+    const base = {
+      storeId: null,
+      cct: null,
+      chave: "domingos_folga_mulher_mes",
+      vigenciaInicio: null,
+    } as const;
+    const regraRS: RegraSeed = { ...base, uf: "RS", valor: 2, tipo: "DEPENDE_CCT", vigenciaFim: null, fonte: "x" };
+    const regraSP: RegraSeed = { ...base, uf: "SP", valor: 2, tipo: "DEPENDE_CCT", vigenciaFim: null, fonte: "x" };
+
+    expect(chaveUnicidadeRegra(regraRS)).not.toBe(chaveUnicidadeRegra(regraSP));
+  });
+
+  it("mesma chave e mesma vigência, CCT diferente → chaves de unicidade distintas", () => {
+    const base = {
+      storeId: 10,
+      uf: "SP",
+      chave: "jornada_max_diaria",
+      vigenciaInicio: "2026-12-16",
+    } as const;
+    const regraA: RegraSeed = { ...base, cct: "SINDHA-SP", valor: 10, tipo: "DURA", vigenciaFim: null, fonte: "x" };
+    const regraB: RegraSeed = { ...base, cct: "SINTHORESP", valor: 10, tipo: "DURA", vigenciaFim: null, fonte: "x" };
+
+    expect(chaveUnicidadeRegra(regraA)).not.toBe(chaveUnicidadeRegra(regraB));
+  });
+
+  it("todas as 5 colunas iguais → mesma chave de unicidade (duplicata real)", () => {
+    const regra: RegraSeed = {
+      storeId: 10,
+      uf: "SP",
+      cct: "SINDHA-SP",
+      chave: "jornada_max_diaria",
+      valor: 10,
+      tipo: "DURA",
+      vigenciaInicio: "2026-12-16",
+      vigenciaFim: null,
+      fonte: "x",
+    };
+    const copia: RegraSeed = { ...regra };
+
+    expect(chaveUnicidadeRegra(regra)).toBe(chaveUnicidadeRegra(copia));
+  });
+
+  it("o seed atual (REGRAS_LEGAIS_INICIAIS) não tem chaves de unicidade duplicadas", () => {
+    const chaves = REGRAS_LEGAIS_INICIAIS.map(chaveUnicidadeRegra);
+    expect(new Set(chaves).size).toBe(chaves.length);
   });
 });

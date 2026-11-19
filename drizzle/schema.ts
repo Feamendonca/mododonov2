@@ -1004,6 +1004,8 @@ export const regrasEscala = pgTable("regras_escala", {
 }, (t) => ({
   uqRegrasEscalaStoreChaveVigencia: uniqueIndex("uq_regras_escala_store_chave_vigencia").on(
     t.storeId,
+    t.uf,
+    t.cct,
     t.chave,
     t.vigenciaInicio,
   ),
