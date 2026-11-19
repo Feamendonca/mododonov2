@@ -228,6 +228,14 @@ export const CATALOGO_INICIAL: EscalaCatalogoSeed[] = [
 // futuros — sem isso o resolvedor não acharia regra aplicável para hoje
 // (19/11/2026). Ver nota de topo do arquivo.
 //
+// `fonte` CITA O ARTIGO, sempre (Menor da review final): é a citação que
+// defende a escala numa reclamatória trabalhista — "EC 141/2026" sozinho não
+// diz a ninguém o que foi alterado. ⚠️ Os números de artigo da EC 141/2026
+// registrados aqui seguem a leitura da spec e PRECISAM ser conferidos com o
+// trabalhista antes de o módulo ir a produção (a própria spec marca o
+// catálogo como "a validar com o trabalhista"). Corrigir aqui é um UPDATE de
+// parâmetro, nunca mudança de código.
+//
 // domingos_folga_mulher_mes e domingos_folga_homem_mes entram OBRIGATORIAMENTE
 // como DEPENDE_CCT (ruling do controlador, 2026-11-19): o art. 386 da CLT está
 // em disputa entre TST (indisponível) e STF (negociável), e a AMFoods opera em
@@ -253,7 +261,7 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
     tipo: "DURA",
     vigenciaInicio: "2026-12-16",
     vigenciaFim: "2027-12-15",
-    fonte: "EC 141/2026",
+    fonte: "EC 141/2026, art. 1º (nova redação do art. 7º, XIII, da CF/88) c/c art. 3º (transição: 42h de 16/12/2026 a 15/12/2027)",
   },
   {
     storeId: null,
@@ -264,7 +272,7 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
     tipo: "DURA",
     vigenciaInicio: "2027-12-16",
     vigenciaFim: null,
-    fonte: "EC 141/2026",
+    fonte: "EC 141/2026, art. 1º (nova redação do art. 7º, XIII, da CF/88) — teto definitivo de 40h a partir de 16/12/2027",
   },
   {
     storeId: null,
@@ -286,7 +294,7 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
     tipo: "DURA",
     vigenciaInicio: "2026-12-16",
     vigenciaFim: null,
-    fonte: "EC 141/2026",
+    fonte: "EC 141/2026, art. 1º (nova redação do art. 7º, XV, da CF/88) — dois repousos semanais remunerados",
   },
   {
     storeId: null,
@@ -354,6 +362,11 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
     vigenciaFim: null,
     fonte: "CLT art. 73",
   },
+  // 🔴 Menor (review final): `max_dias_consecutivos: 6` é o parâmetro que
+  // CODIFICA a 6x1. Sem data de fim, ele autorizava 6 dias corridos de
+  // trabalho depois de 16/12/2026 — exatamente o que a EC 141/2026 acaba —
+  // e o motor teria uma trava dizendo "pode" enquanto outra dizia "dois
+  // repousos por semana". Fechado em 15/12/2026, com sucessora.
   {
     storeId: null,
     uf: null,
@@ -362,8 +375,25 @@ export const REGRAS_LEGAIS_INICIAIS: RegraSeed[] = [
     valor: 6,
     tipo: "DURA",
     vigenciaInicio: null,
+    vigenciaFim: "2026-12-15",
+    fonte: "CLT art. 67 c/c Lei 605/1949 (repouso semanal remunerado) — regime anterior à EC 141/2026",
+  },
+  {
+    storeId: null,
+    uf: null,
+    cct: null,
+    chave: "max_dias_consecutivos",
+    // 5, e não 6, porque é a consequência direta de `repousos_por_semana:
+    // 2` dentro da SEMANA CIVIL: 7 dias − 2 repousos = no máximo 5 dias de
+    // trabalho. Encadeamentos entre semanas (folgas no início de uma e no
+    // fim da seguinte) só são defensáveis com amparo de CCT — e, se a
+    // praça tiver esse amparo, a regra entra como cadastro de UF/CCT com
+    // vigência própria, não afrouxando o piso de rede para todo mundo.
+    valor: 5,
+    tipo: "DURA",
+    vigenciaInicio: "2026-12-16",
     vigenciaFim: null,
-    fonte: "CLT art. 67 c/c Lei 605/1949 (repouso semanal remunerado)",
+    fonte: "EC 141/2026, art. 1º (nova redação do art. 7º, XV, da CF/88) — dois repousos na semana civil ⇒ no máximo 5 dias consecutivos de trabalho",
   },
   {
     storeId: null,

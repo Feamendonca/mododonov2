@@ -343,3 +343,48 @@ describe("R29 — coerência entre CATALOGO_INICIAL e REGRAS_LEGAIS_INICIAIS", (
     expect(toInsertCatalogo(cinco).excecoesLegais).toBeNull();
   });
 });
+
+// ─── Menores da review final: 6x1 codificada em parâmetro, e citação legal ──
+
+describe("max_dias_consecutivos — o parâmetro que codifica a 6x1 encerra com a EC 141", () => {
+  function valorEm(data: string): number {
+    const mapa = resolverRegras(REGRAS_LEGAIS_INICIAIS, { storeId: 1, uf: "SP", data });
+    return regraObrigatoria(mapa, "max_dias_consecutivos").valor as number;
+  }
+
+  it("até 15/12/2026 continua 6 (a 6x1 ainda é legal)", () => {
+    expect(valorEm("2026-11-19")).toBe(6);
+    expect(valorEm("2026-12-15")).toBe(6);
+  });
+
+  it("a partir de 16/12/2026 cai para 5 — e NUNCA mais devolve 6", () => {
+    expect(valorEm("2026-12-16")).toBe(5);
+    expect(valorEm("2027-12-16")).toBe(5);
+    expect(valorEm("2030-01-01")).toBe(5);
+  });
+
+  it("é coerente com repousos_por_semana na mesma data (7 dias − repousos)", () => {
+    for (const data of ["2026-11-19", "2026-12-16", "2027-12-16"]) {
+      const mapa = resolverRegras(REGRAS_LEGAIS_INICIAIS, { storeId: 1, uf: "SP", data });
+      const repousos = regraObrigatoria(mapa, "repousos_por_semana").valor as number;
+      const consecutivos = regraObrigatoria(mapa, "max_dias_consecutivos").valor as number;
+      expect(consecutivos, `em ${data}: ${repousos} repousos ⇒ no máximo ${7 - repousos} dias`).toBe(7 - repousos);
+    }
+  });
+});
+
+describe("fonte das regras — citação que defende a escala numa reclamatória", () => {
+  it("toda regra que invoca a EC 141/2026 cita o artigo, nunca só o número da emenda", () => {
+    const daEc = REGRAS_LEGAIS_INICIAIS.filter((r) => r.fonte.includes("EC 141/2026"));
+    expect(daEc.length).toBeGreaterThan(0);
+    for (const regra of daEc) {
+      expect(regra.fonte, `fonte de "${regra.chave}" sem artigo: "${regra.fonte}"`).toMatch(/art\.\s*\d/);
+    }
+  });
+
+  it("nenhuma fonte é a string nua 'EC 141/2026'", () => {
+    for (const regra of REGRAS_LEGAIS_INICIAIS) {
+      expect(regra.fonte.trim()).not.toBe("EC 141/2026");
+    }
+  });
+});
