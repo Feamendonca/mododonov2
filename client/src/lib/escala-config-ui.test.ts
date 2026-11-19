@@ -117,21 +117,51 @@ describe("validarFuncao — espelha a validação do servidor (conveniência de 
   });
 });
 
-describe("rotuloOrigemProdutividade — texto que o gerente lê", () => {
-  it("rotula sugestão vinda do histórico da loja", () => {
-    expect(rotuloOrigemProdutividade("sugerida_historico")).toBe("histórico da loja");
+describe("rotuloOrigemProdutividade — texto que o gerente lê (R22: honestidade de rótulo)", () => {
+  it("driver tickets: rotula sugestão vinda do histórico da loja, SEM ressalva (atendimentos ≈ tickets, base é específica)", () => {
+    expect(rotuloOrigemProdutividade("sugerida_historico", "tickets")).toBe("histórico da loja");
   });
 
-  it("rotula sugestão vinda de benchmark da rede", () => {
-    expect(rotuloOrigemProdutividade("sugerida_benchmark")).toBe("melhor loja da rede");
+  it("driver tickets: rotula sugestão vinda de benchmark da rede, SEM ressalva", () => {
+    expect(rotuloOrigemProdutividade("sugerida_benchmark", "tickets")).toBe("melhor loja da rede");
   });
 
-  it("rotula valor definido manualmente pelo gestor", () => {
-    expect(rotuloOrigemProdutividade("definida_gestor")).toBe("definida por você");
+  it("driver pratos: sugestão do histórico da loja carrega a ressalva — base é o total de atendimentos genérico, não pratos", () => {
+    const rotulo = rotuloOrigemProdutividade("sugerida_historico", "pratos");
+    expect(rotulo).toContain("histórico da loja");
+    expect(rotulo.toLowerCase()).toContain("atendimentos");
+    expect(rotulo.toLowerCase()).toMatch(/confir|confere|verifi/);
   });
 
-  it("devolve string vazia para origem nula (sem sugestão ainda, campo em branco)", () => {
-    expect(rotuloOrigemProdutividade(null)).toBe("");
+  it("driver cobertos: sugestão do histórico da loja carrega a ressalva — mesma razão do pratos (mesa com várias pessoas, atendimento ≠ coberto)", () => {
+    const rotulo = rotuloOrigemProdutividade("sugerida_historico", "cobertos");
+    expect(rotulo).toContain("histórico da loja");
+    expect(rotulo.toLowerCase()).toContain("atendimentos");
+    expect(rotulo.toLowerCase()).toMatch(/confir|confere|verifi/);
+  });
+
+  it("driver pratos: sugestão de benchmark da rede também carrega a ressalva — mesma base genérica, outra loja", () => {
+    const rotulo = rotuloOrigemProdutividade("sugerida_benchmark", "pratos");
+    expect(rotulo).toContain("melhor loja da rede");
+    expect(rotulo.toLowerCase()).toContain("atendimentos");
+  });
+
+  it("driver cobertos: sugestão de benchmark da rede também carrega a ressalva", () => {
+    const rotulo = rotuloOrigemProdutividade("sugerida_benchmark", "cobertos");
+    expect(rotulo).toContain("melhor loja da rede");
+    expect(rotulo.toLowerCase()).toContain("atendimentos");
+  });
+
+  it("valor definido manualmente pelo gestor: NUNCA leva ressalva, em nenhum driver — o gestor já sabe a base do número que ele mesmo digitou", () => {
+    expect(rotuloOrigemProdutividade("definida_gestor", "tickets")).toBe("definida por você");
+    expect(rotuloOrigemProdutividade("definida_gestor", "pratos")).toBe("definida por você");
+    expect(rotuloOrigemProdutividade("definida_gestor", "cobertos")).toBe("definida por você");
+  });
+
+  it("origem nula: devolve string vazia independente do driver (sem sugestão ainda, campo em branco)", () => {
+    expect(rotuloOrigemProdutividade(null, "tickets")).toBe("");
+    expect(rotuloOrigemProdutividade(null, "pratos")).toBe("");
+    expect(rotuloOrigemProdutividade(null, "cobertos")).toBe("");
   });
 });
 

@@ -73,18 +73,51 @@ export function validarFuncao(entrada: EntradaValidarFuncao): string[] {
 }
 
 /**
+ * Drivers para os quais a contagem de `atendimentos` (hoje a ÚNICA fonte
+ * de volume que o histórico tem — ver `server/db-escala-config.ts`) É a
+ * própria unidade de demanda, não uma aproximação. `tickets` está nesta
+ * lista; `pratos`/`cobertos` não — um atendimento pode render várias
+ * mesas ou pessoas (R22: "na Casa do Pão de Queijo 1 ticket ≈ 1
+ * atendimento; no Pecorino um ticket pode ter 5 ou 10 pessoas na mesa").
+ * A contagem segregada por driver é o trabalho do próximo plano
+ * (`demanda_bloco`) — aqui só precisamos SABER quando o número que
+ * estamos mostrando não é a medida certa, e dizer isso.
+ */
+const DRIVERS_COM_CONTAGEM_ESPECIFICA: readonly DriverFuncao[] = ["tickets"];
+
+/**
+ * R22 (pós-revisão): mesma família de defeito que apareceu outras vezes
+ * no plano — o sistema dar uma resposta plausível e errada, sem
+ * sinalizar. Uma sugestão para "Garçom" (driver `cobertos`) aparecia
+ * rotulada só como "histórico da loja", e o gerente confiaria — mas o
+ * número vem de `atendimentos` genéricos, que para o salão não mede
+ * quase nada. Esta ressalva não muda o CÁLCULO nem o CONTRATO (ambos
+ * corretos, R20) — é só a tela deixar de implicar uma precisão que a
+ * sugestão não tem, para qualquer driver fora da lista acima.
+ */
+const RESSALVA_BASE_GENERICA =
+  " — baseado no total de atendimentos da loja, ainda sem contagem específica para esta função; confira se faz sentido antes de usar";
+
+/**
  * Texto que o gerente lê para cada origem da produtividade sugerida/salva.
  * `null` significa que ainda não há origem (campo em branco, sem sugestão
  * disponível e sem valor definido ainda) — devolve string vazia para que
  * quem renderiza decida o que fazer (ex.: mostrar a mensagem de
  * indisponibilidade em vez de um rótulo).
+ *
+ * `driver` é usado só para decidir se a ressalva de base genérica (R22)
+ * entra ou não — uma sugestão (`sugerida_*`) para um driver fora de
+ * `DRIVERS_COM_CONTAGEM_ESPECIFICA` leva a ressalva; um valor que o
+ * próprio gestor digitou (`definida_gestor`) nunca leva, porque ele já
+ * sabe a base do número que escreveu.
  */
-export function rotuloOrigemProdutividade(origem: ProdutividadeOrigem | null): string {
+export function rotuloOrigemProdutividade(origem: ProdutividadeOrigem | null, driver: DriverFuncao): string {
+  const ressalva = DRIVERS_COM_CONTAGEM_ESPECIFICA.includes(driver) ? "" : RESSALVA_BASE_GENERICA;
   switch (origem) {
     case "sugerida_historico":
-      return "histórico da loja";
+      return `histórico da loja${ressalva}`;
     case "sugerida_benchmark":
-      return "melhor loja da rede";
+      return `melhor loja da rede${ressalva}`;
     case "definida_gestor":
       return "definida por você";
     case null:

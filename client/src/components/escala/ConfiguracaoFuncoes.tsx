@@ -33,6 +33,17 @@
  *   pede o número ao gestor.
  * - Qualquer edição manual do campo marca a origem como "definida por
  *   você" — o gestor sempre pode sobrescrever.
+ * - R22 (pós-revisão): o rótulo de origem (`rotuloOrigemProdutividade`,
+ *   em `escala-config-ui.ts`) agora recebe o `driver` e embute uma
+ *   ressalva quando a sugestão NÃO é específica da função — hoje o único
+ *   número que o histórico sabe calcular é a partir de `atendimentos`
+ *   genéricos, que é a própria unidade de demanda para `tickets`, mas só
+ *   uma aproximação grosseira para `pratos`/`cobertos` (ex.: um atendimento
+ *   pode cobrir uma mesa de 10 pessoas). A contagem segregada por driver é
+ *   o trabalho do próximo plano (`demanda_bloco`); até lá, a tela não pode
+ *   implicar uma precisão que o número não tem — mesmo rótulo teria
+ *   deixado o gestor calibrar a escala do salão com régua de caixa, sem
+ *   saber.
  *
  * Erros de mutation NUNCA são engolidos (aprendizado das tasks
  * anteriores): `onError` sempre dispara um toast visível, incluindo
@@ -232,7 +243,7 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
                   <>
                     {" · "}
                     {funcao.produtividadeAlvo} {DRIVER_LABELS[funcao.driver].toLowerCase()}/h
-                    {funcao.produtividadeOrigem && ` (${rotuloOrigemProdutividade(funcao.produtividadeOrigem)})`}
+                    {funcao.produtividadeOrigem && ` (${rotuloOrigemProdutividade(funcao.produtividadeOrigem, funcao.driver)})`}
                   </>
                 )}
               </div>
@@ -324,7 +335,7 @@ export function ConfiguracaoFuncoes({ storeId }: { storeId: number }) {
                   />
                   {form.produtividadeAlvo !== "" && form.produtividadeOrigem && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Origem: {rotuloOrigemProdutividade(form.produtividadeOrigem)}
+                      Origem: {rotuloOrigemProdutividade(form.produtividadeOrigem, form.driver)}
                     </p>
                   )}
                   {sugestaoIndisponivel && (
