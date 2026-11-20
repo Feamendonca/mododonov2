@@ -304,3 +304,23 @@ Saída: a pauta **ordenada por retorno em reais**, com a simulação anexa — o
 
 ## Onde entra
 Item 1 no **Plano 2** (é parâmetro). Itens 2 e 3 viram o **Plano 4**, depois do motor existir — a pauta depende de o motor saber calcular o mínimo.
+
+## 🔒 Guarda-corpo da pauta de negociação (decisão do Fernando)
+
+A pauta **não pode otimizar cegamente**. Ela existe para achar o melhor arranjo **dentro** da lei e da convenção — não para descobrir o que dá mais dinheiro ignorando as duas.
+
+Regras do gerador de propostas:
+1. **Só propõe o que é plausível** — alteração de parâmetro que a lei admite negociar (intervalo, jornada diária, banco de horas, turno partido). Nunca pedido que contrarie direito indisponível.
+2. **Parte do que a CCT vigente já permite.** Se a convenção da praça já autoriza 3h de intervalo, a proposta é ampliar para 4h — não começar do zero ignorando o que está acordado.
+3. **Ordena por retorno, mas filtra por plausibilidade antes.** Proposta economicamente ótima e juridicamente absurda não entra na lista — nem como opção.
+4. **Toda proposta sai marcada como sujeita a validação jurídica.** O sistema diz quanto vale, nunca se pode.
+
+## Alavancas futuras de cobertura (backlog — NÃO agora)
+
+O Fernando apontou duas, para depois do básico funcionar:
+- **Contrato intermitente** (Lei 13.467/2017, art. 443 §3º e 452-A) — convocação com antecedência mínima, pagamento por período trabalhado. Encaixa em pico previsível.
+- **Extras / freelancer em dias específicos** — cobertura pontual sem ampliar quadro fixo.
+
+Ambas mudam a conta do quadro mínimo: deixam de ser "quantas pessoas fixas" e viram "qual mix de fixo + variável". **Entram só depois do motor básico estar rodando e validado.**
+
+> Disciplina registrada pelo Fernando: *"vamos primeiro fazer o básico, depois incluímos mais coisas."* Sequência: Plano 2 (demanda) → Plano 3 (motor) → Plano 4 (CCT + pauta) → mix de contratos.
