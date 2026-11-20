@@ -244,3 +244,63 @@ Roda sobre a escala já montada (gerada pelo motor **ou** feita à mão pelo ger
 
 ## Como isto se liga ao resto do app
 O módulo não vive sozinho: a folha projetada alimenta o **Orçamento** (linha de pessoal), as metas alimentam o **4DX**, e os desvios viram **ações** e **treinamentos** — a mesma cadeia que o Orçamento já percorre.
+
+---
+
+# Extensão (2026-11-19, tarde) — Jornada partida, CCTs e pauta de negociação
+
+> Origem: conversa com o Fernando. Três pedidos novos, em ordem crescente de valor e de risco.
+
+## O achado que motiva tudo
+
+Simulação com curva de restaurante de dois picos (almoço e jantar), otimizador buscando o quadro mínimo:
+
+| | Pessoas/dia | Pessoas-hora | Desperdício |
+|---|---|---|---|
+| Só turno corrido (6-8h) | 6 | 45 | **114%** |
+| **Com jornada partida** | **4** | **28** | **33%** |
+
+**−33% de pessoas, −38% de horas pagas.** Causa: no turno corrido, cobrir o jantar obriga a manter gente parada no vale da tarde. Na partida, a **mesma pessoa** cobre os dois picos.
+
+🔑 **A EC 141 custa +20%. A jornada partida devolve −33%. O saldo é negativo** — dá para cumprir a lei nova com MENOS gente do que hoje. Esse é o norte do módulo.
+
+⚠️ **Distinção que importa juridicamente:** o que o Fernando descreveu é **intrajornada** (pausa dentro do dia), não interjornada. A **interjornada de 11h entre dias continua valendo** — quem sai às 23h não volta antes das 10h — e trava combinações. O motor precisa das duas.
+
+## 1. Intervalo intrajornada parametrizável
+
+A regra hoje é `{minutos:60, condicaoJornadaAcimaHoras:6, minutosReduzidoComCct:30}` — só tem piso. Passa a ter:
+
+```
+intervalo_intrajornada = {
+  minutoMinimo, minutoMinimoComCct,
+  minutoMaximo,            // 120 = teto legal do art. 71 CLT
+  minutoMaximoComCct,      // ampliado por convenção — é o que libera a partida
+  jornadaPartidaPermitida, // bool
+  maxFracoesPorDia         // 2 = um retorno
+}
+```
+Escopo por rede/UF/loja, igual às demais — **a tabela de regras já suporta.** Pausa acima do teto legal sem respaldo de CCT é marcada `DEPENDE_CCT`, nunca oferecida como segura.
+
+## 2. Upload de convenções coletivas
+
+Nova tabela `convencoes_coletivas`: arquivo, UF, sindicato, vigência, texto extraído. O app lê o PDF e a **IA propõe** as cláusulas relevantes a escala — intervalo, domingos, jornada diária, banco de horas, turno partido.
+
+🔒 **Trava inegociável:** cláusula extraída por IA **NUNCA vira regra ativa sozinha.** Ela nasce como **proposta**, aparece ao lado do texto original citado, e só entra na resolução depois de **confirmação humana**. É o mesmo princípio do Orçamento — a IA propõe, o humano confirma — e aqui vale dobrado: uma cláusula mal lida vira escala ilegal em escala industrial.
+
+Valor: a AMFoods opera em **6 estados com CCTs diferentes** e ninguém as lê. Hoje a regra de domingo está cravada como suposição; passa a sair do documento.
+
+## 3. Pauta de negociação sindical (o mais valioso)
+
+O motor já calcula o quadro mínimo. Rodando **análise de sensibilidade** sobre cada parâmetro negociável, ele responde quanto vale cada pedido:
+
+> "Ampliar o intervalo para 4h nesta praça: **−2 pessoas por loja, R$ X/mês.**"
+> "Reduzir o intervalo mínimo para 30min: −0 pessoas. **Não vale pedir.**"
+
+Saída: a pauta **ordenada por retorno em reais**, com a simulação anexa — o que levar ao sindicato e o que não gastar capital político pedindo.
+
+🔒 **Trava:** o sistema calcula **o que vale para a empresa**, nunca **o que é legal**. Toda proposta sai marcada como "sujeita a validação jurídica". Ele não opina sobre viabilidade legal — isso é do trabalhista.
+
+> **Exemplo real desta conversa:** modular 6x1 com 4x3 (6 dias numa semana, 4 na outra) parecia economia. A conta mostrou **5 dias/semana na média — idêntico à 5x2, zero pessoa economizada.** Daria flexibilidade, não economia. Já a jornada partida dá −33%. **É exatamente esse tipo de erro que a pauta automática evita:** negociar a coisa errada custa capital político e não entrega nada.
+
+## Onde entra
+Item 1 no **Plano 2** (é parâmetro). Itens 2 e 3 viram o **Plano 4**, depois do motor existir — a pauta depende de o motor saber calcular o mínimo.
