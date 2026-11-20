@@ -84,7 +84,62 @@ Como no sistema de referência: **simular nunca toca a escala oficial.** O gesto
 ## O que NÃO entra
 Alocação de pessoas por nome (Plano 3) · upload de CCT e pauta sindical (Plano 4) · contrato intermitente e extras (backlog).
 
-## Decisões a confirmar com o Fernando
+
+---
+
+# ✅ MODELO FINAL (definido com o Fernando em 19/11) — substitui o desenho de bloco acima
+
+## Turnos escalonados, não blocos
+
+**Turno = o horário de trabalho de uma pessoa.** A loja tem vários, com entradas diferentes:
+
+```
+Turno A   05:00 ──────────── 14:00
+Turno B      06:00 ──────────── 15:00
+Turno C            10:00 ──────────── 19:00
+Turno D                  14:00 ──────────── 23:00
+```
+
+Não são pedaços do dia — são **modelos de jornada**. O escalonamento das entradas dá a granularidade. **A cobertura por hora é consequência** do empilhamento dos turnos, não algo declarado.
+
+A tabela `shift_blocks` do Plano 1 **já serve** (nome, hora início, hora fim, por loja). Só precisa ganhar **intervalo** para suportar jornada partida: `11:00–15:00 + 18:00–22:00`.
+
+## A meta é por MOMENTO da operação
+
+Nas palavras do Fernando: *"quantos na abertura, quantos no fechamento, quantos nos horários de pico"*.
+
+| Momento | Meta |
+|---|---|
+| Abertura | 2 |
+| Pico almoço | 6 |
+| Vale da tarde | 2 |
+| Pico jantar | 5 |
+| Fechamento | 2 |
+
+4-5 números por dia da semana, com a loja nomeando os momentos dela. Natural, e muito mais barato que faixa rígida.
+
+> O piso de segurança deixa de ser campo separado: **vira a meta do momento mais fraco.**
+
+## 🔑 E o sistema PROPÕE tudo isso
+
+O gerente **nunca encara formulário em branco**:
+
+1. **O sistema identifica os momentos** olhando a curva de movimento — acha picos e vales sozinho e propõe os cortes de horário.
+2. **Propõe a meta de cada momento** — demanda daquele horário ÷ produtividade-alvo da função.
+3. **O gerente corrige** o que não bate com a realidade dele. A correção é o que vale.
+4. **O motor procura** a combinação de turnos que cobre os momentos com o menor quadro.
+
+Mesmo princípio sagrado do app: **propõe, humano confirma, nunca grava sozinho.**
+
+### O ovo-e-galinha do dia 1, resolvido
+Para sugerir é preciso demanda, e no dia 1 não há dado por hora. A `estimarPorCurva` (já existe no código) pega o **total do dia** — que o gerente já lança — e distribui por curva padrão de restaurante. Conforme a loja acumula histórico, a curva deixa de ser genérica e vira a dela.
+
+**O dia 1 funciona com zero dado novo.**
+
+## Dia de recebimento: OPCIONAL
+Marcador por dia que a loja pode simplesmente não usar. Nada de campo obrigatório que ninguém preenche.
+
+## Decisões originais (resolvidas acima)
 1. **Turno como unidade** (diurno/noturno, como o Escala Fácil) ou **bloco de turno** (mais granular, já modelado no Plano 1)? O bloco permite jornada partida; o turno é mais simples de alimentar.
 2. Dia de recebimento soma **pessoa fixa** (+1) ou **percentual** sobre a meta?
 3. O piso `metaMinima` é por dia×turno ou herda o `minPorBloco` da função?
