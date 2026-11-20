@@ -48,31 +48,112 @@ export const pessoasRouter = router({
     .query(async ({ ctx, input }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);
       const config = await getStorePeopleConfig(input.storeId);
-      return config ?? {
-        storeId: input.storeId,
-        chargesPercent: DEFAULT_CHARGES,
-        productivityTarget: DEFAULT_PRODUCTIVITY_TARGET,
-        payrollTargetPercent: 18,
-        hiringCost: 1500,
-        operationStartHour: 8,
-        operationEndHour: 23,
+      return {
+        ...(config ?? {
+          storeId: input.storeId,
+          chargesPercent: DEFAULT_CHARGES,
+          productivityTarget: DEFAULT_PRODUCTIVITY_TARGET,
+          payrollTargetPercent: 18,
+          hiringCost: 1500,
+          operationStartHour: 8,
+          operationEndHour: 23,
+        }),
+        // R23 (revisão da Task 6, módulo de Escala): sinaliza se existe
+        // uma linha de verdade em `store_people_config`, para distinguir
+        // "ninguém configurou ainda" (usando os defaults abaixo) de "o
+        // gerente salvou e os valores batem com o default por
+        // coincidência" — os campos numéricos isolados são indistinguíveis
+        // entre os dois casos. O assistente de configuração
+        // (client/src/components/escala/AssistenteConfiguracao.tsx) usa
+        // este campo para decidir se o passo de horário de funcionamento
+        // está de fato completo; os outros consumidores desta procedure
+        // (MapaCalor, Quadro, Escala, Análise, Movimentações) continuam
+        // usando só os campos numéricos, como antes.
+        configurado: config !== null,
+        // 🔴 R30 (I9 da review final): `configurado` prova que EXISTE uma
+        // linha, não que o gerente confirmou o horário. Qualquer loja que
+        // já salvou encargos/meta de folha no modal antigo de Pessoas tem
+        // linha — e entraria no assistente com o passo 1 verde e 8h-23h
+        // que ninguém decidiu (DEFAULT da coluna). O carimbo abaixo é o
+        // único sinal de confirmação de verdade; `null` = nunca confirmou.
+        // Migration 0035.
+        horarioConfirmadoEm: config?.horarioConfirmadoEm ?? null,
       };
     }),
 
   saveConfig: protectedProcedure
-    .input(z.object({
-      storeId: z.number(),
-      chargesPercent: z.number().min(0).max(200).optional(),
-      productivityTarget: z.number().min(0).optional(),
-      payrollTargetPercent: z.number().min(0).max(100).optional(),
-      hiringCost: z.number().min(0).optional(),
-      operationStartHour: z.number().min(0).max(23).optional(),
-      operationEndHour: z.number().min(1).max(24).optional(),
-    }))
+    .input(
+      z
+        .object({
+          storeId: z.number(),
+          chargesPercent: z.number().min(0).max(200).optional(),
+          productivityTarget: z.number().min(0).optional(),
+          payrollTargetPercent: z.number().min(0).max(100).optional(),
+          hiringCost: z.number().min(0).optional(),
+          operationStartHour: z.number().min(0).max(23).optional(),
+          operationEndHour: z.number().min(1).max(24).optional(),
+          // 🔴 R30 (I9): marca que esta chamada é a CONFIRMAÇÃO do horário
+          // pelo gerente (vem do assistente de configuração da Escala) —
+          // grava o carimbo `horarioConfirmadoEm`. O modal antigo de
+          // Configurações de Pessoas não manda este campo e continua não
+          // carimbando nada.
+          confirmarHorario: z.boolean().optional(),
+        })
+        // I1 (revisão da Task 6, módulo de Escala): a checagem cruzada
+        // "fechamento depois da abertura" vivia só no
+        // AssistenteConfiguracao.tsx — sem teste (ruling R19, sem
+        // .test.tsx neste repo) e sem tranca no servidor. Qualquer
+        // caminho que não passasse por aquele componente (outra tela,
+        // uma chamada direta à procedure) podia gravar um horário
+        // inválido. A comparação em si só roda quando os DOIS campos
+        // chegam juntos — e é o segundo `.refine` (I8, abaixo) que
+        // garante que eles cheguem sempre juntos quando o horário muda.
+        .refine(
+          (data) =>
+            data.operationStartHour === undefined ||
+            data.operationEndHour === undefined ||
+            data.operationEndHour > data.operationStartHour,
+          {
+            message: "O horário de fechamento precisa ser depois do horário de abertura.",
+            path: ["operationEndHour"],
+          }
+        )
+        // 🔴 I8 (review final): o `.refine` acima só valida quando os DOIS
+        // campos chegam juntos — e `upsertStorePeopleConfig` grava
+        // PARCIAL. Mandar só `operationEndHour: 5` numa loja que abre às
+        // 8h persistia um horário inválido sem passar por validação
+        // nenhuma. Fechado exigindo o PAR: quem mexe em horário manda os
+        // dois, e aí a comparação cruzada acima sempre tem os dois lados.
+        // Alternativa descartada: ler o valor salvo dentro da mutation para
+        // comparar — mexeria na lógica de mutation de `pessoas`, que é
+        // módulo de outra task, para ganhar uma flexibilidade que nenhuma
+        // tela usa (as duas chamadas existentes mandam os dois campos).
+        .refine(
+          (data) =>
+            (data.operationStartHour === undefined) === (data.operationEndHour === undefined),
+          {
+            message:
+              "Para alterar o horário de funcionamento, informe a abertura E o fechamento juntos — senão não há como validar um contra o outro.",
+            path: ["operationEndHour"],
+          }
+        )
+        // R30: o carimbo de confirmação é sobre um horário concreto; só faz
+        // sentido junto dos dois valores que estão sendo confirmados.
+        .refine((data) => !data.confirmarHorario || data.operationStartHour !== undefined, {
+          message: "confirmarHorario exige operationStartHour e operationEndHour na mesma chamada.",
+          path: ["confirmarHorario"],
+        })
+    )
     .mutation(async ({ ctx, input }) => {
       await assertPodeAcessarLoja(ctx, input.storeId);
-      const { storeId, ...data } = input;
-      await upsertStorePeopleConfig(storeId, data);
+      const { storeId, confirmarHorario, ...data } = input;
+      // R30: `confirmarHorario` é flag de intenção, não coluna — vira o
+      // carimbo `horarioConfirmadoEm`. Nada mais na lógica desta mutation
+      // mudou (segue o mesmo upsert parcial de sempre).
+      await upsertStorePeopleConfig(
+        storeId,
+        confirmarHorario ? { ...data, horarioConfirmadoEm: new Date() } : data
+      );
       return { success: true };
     }),
 

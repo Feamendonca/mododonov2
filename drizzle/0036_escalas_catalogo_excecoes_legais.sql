@@ -1,0 +1,28 @@
+-- Migration 0036: `excecoesLegais` em `escalas_catalogo`.
+-- Postgres/Supabase. Idempotente. Coluna camelCase entre aspas (mesma
+-- convenção das migrations 0027-0035).
+--
+-- R29 (I7 da review final, .superpowers/sdd/2026-11-19-escala-configuracao/):
+-- o catálogo contradizia as próprias regras. A 12x36 tem jornada de 12h/dia
+-- e o seed legal cadastra `jornada_max_diaria: 10` como DURA. O motor do
+-- Plano 3 trata toda DURA como trava (viola → rejeita a solução), então ele
+-- descartaria um regime legítimo — ou alguém "resolveria" afrouxando a DURA
+-- de 10h para TODO mundo, que é como uma exceção pontual vira buraco geral.
+--
+-- O marcador é por CHAVE DE REGRA, não um booleano "é exceção":
+--   [{"chaveRegra": "jornada_max_diaria", "fundamento": "CLT art. 59-A"}]
+-- Diz exatamente QUAL trava o regime excepciona e com que base legal — que
+-- é o que o motor precisa saber e o que defende a escala numa reclamatória.
+-- Toda outra DURA continua valendo normalmente para o regime.
+--
+-- NULL = nenhuma exceção (é o caso de 5x2, 4x3, 6x1 e 6x2). Sem backfill:
+-- o valor correto para as linhas existentes é exatamente NULL, e o seed
+-- (`npm run escala:seed`) preenche a da 12x36 quando a linha for criada.
+-- Para uma base que JÁ tem a 12x36 inserida, aplicar o UPDATE comentado
+-- abaixo (o seed é idempotente por chave lógica: ele não reescreve linha
+-- existente).
+ALTER TABLE escalas_catalogo ADD COLUMN IF NOT EXISTS "excecoesLegais" JSONB;
+
+-- UPDATE escalas_catalogo
+--    SET "excecoesLegais" = '[{"chaveRegra":"jornada_max_diaria","fundamento":"CLT art. 59-A"}]'::jsonb
+--  WHERE codigo = '12x36' AND "excecoesLegais" IS NULL;

@@ -2,6 +2,7 @@ import {
   bigint,
   boolean,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -81,6 +82,16 @@ export const stores = pgTable("stores", {
   dreSharepointUrl: text("dreSharepointUrl"),
   /** Filtro de nome de arquivo (ex.: "Praça") pra desambiguar sub-unidades na mesma pasta. Migration 0030. */
   dreFileFilter: varchar("dreFileFilter", { length: 120 }),
+  /**
+   * UF da loja (sigla de 2 letras), usada pelo módulo de Escala para resolver
+   * regras de escopo estadual (`getRegras`/`resolverRegras`). NULLABLE de
+   * propósito: não há acesso ao banco para fazer o backfill das 39 lojas
+   * existentes — ver R13, .superpowers/sdd/2026-11-19-escala-configuracao/
+   * progress.md. Loja sem `uf` só recebe regras de escopo rede; a ausência
+   * é sinalizada explicitamente por `getRegrasVigentes`, nunca absorvida em
+   * silêncio. Migration 0033.
+   */
+  uf: varchar("uf", { length: 2 }),
 });
 
 export type Store = typeof stores.$inferSelect;
@@ -468,6 +479,17 @@ export const storePeopleConfig = pgTable("store_people_config", {
   hiringCost: numeric("hiringCost", { precision: 10, scale: 2 }).notNull().default("1500.00"),
   operationStartHour: integer("operationStartHour").notNull().default(8),
   operationEndHour: integer("operationEndHour").notNull().default(23),
+  /**
+   * Quando o gerente CONFIRMOU o horário de funcionamento pelo assistente
+   * de configuração da Escala. NULL = nunca confirmou — e aí os valores de
+   * `operationStartHour`/`operationEndHour` são o DEFAULT do sistema
+   * (8h-23h), não uma decisão de ninguém.
+   *
+   * R30 (I9 da review final): a existência da LINHA não prova confirmação
+   * — qualquer loja que já salvou encargos/meta de folha no modal antigo
+   * de Pessoas tem linha, com 8h-23h herdados do default. Migration 0035.
+   */
+  horarioConfirmadoEm: timestamp("horarioConfirmadoEm"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),
 });
@@ -933,3 +955,120 @@ export const orcamentoLinhas = pgTable("orcamento_linhas", {
   uqOrcLinha: uniqueIndex("uq_orc_linha").on(t.orcamentoId, t.codigo),
 }));
 export type OrcamentoLinhaRow = typeof orcamentoLinhas.$inferSelect;
+
+// ─── Escala — Funções da Loja — migration 0032 ────────────────────────────────
+export const funcoesLojaDriverEnum = pgEnum("funcoes_loja_driver", ["tickets", "pratos", "cobertos"]);
+export const funcoesLojaProdutividadeOrigemEnum = pgEnum("funcoes_loja_produtividade_origem", [
+  "sugerida_historico",
+  "sugerida_benchmark",
+  "definida_gestor",
+]);
+
+export const funcoesLoja = pgTable("funcoes_loja", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  nome: varchar("nome", { length: 64 }).notNull(),
+  driver: funcoesLojaDriverEnum("driver").notNull(),
+  produtividadeAlvo: numeric("produtividadeAlvo", { precision: 10, scale: 2 }),
+  produtividadeOrigem: funcoesLojaProdutividadeOrigemEnum("produtividadeOrigem"),
+  minPorBloco: integer("minPorBloco").notNull().default(0),
+  maxPorBloco: integer("maxPorBloco"),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow(),
+}, (t) => ({
+  idxFuncoesLojaStoreAtivo: index("idx_funcoes_loja_store_ativo").on(t.storeId, t.ativo),
+  uqFuncoesLojaStoreNome: uniqueIndex("uq_funcoes_loja_store_nome").on(t.storeId, t.nome),
+}));
+export type FuncaoLojaRow = typeof funcoesLoja.$inferSelect;
+export type InsertFuncaoLoja = typeof funcoesLoja.$inferInsert;
+
+// ─── Escala — Catálogo Legal (EC 141/2026) — migration 0032 ──────────────────
+// Toda regra legal é parâmetro com data de vigência, nunca constante no código.
+// Ver docs/superpowers/specs/2026-11-19-gestor-de-escala-design.md, seções 1 e 2.
+export const escalasCatalogo = pgTable("escalas_catalogo", {
+  id: serial("id").primaryKey(),
+  codigo: varchar("codigo", { length: 32 }).notNull(),
+  nome: varchar("nome", { length: 128 }).notNull(),
+  diasTrabalho: integer("diasTrabalho").notNull(),
+  diasFolga: integer("diasFolga").notNull(),
+  horasDiaPadrao: numeric("horasDiaPadrao", { precision: 5, scale: 2 }).notNull(),
+  horasSemanaMedia: numeric("horasSemanaMedia", { precision: 5, scale: 2 }).notNull(),
+  vigenciaInicio: date("vigenciaInicio"),
+  vigenciaFim: date("vigenciaFim"),
+  exigeAcordoIndividual: boolean("exigeAcordoIndividual").notNull().default(false),
+  exigeCCT: boolean("exigeCCT").notNull().default(false),
+  observacaoLegal: text("observacaoLegal"),
+  /**
+   * 🔴 R29 (I7 da review final): travas legais que ESTE regime excepciona,
+   * com fundamento — `[{chaveRegra: "jornada_max_diaria", fundamento:
+   * "CLT art. 59-A"}]` na 12x36. NULL = nenhuma exceção.
+   *
+   * Sem isto o motor do Plano 3 (toda DURA é trava: viola → rejeita)
+   * descartaria a 12x36 por causa da DURA `jornada_max_diaria: 10` — ou
+   * alguém afrouxaria essa DURA para TODO mundo, que é como uma exceção
+   * pontual vira buraco geral. Por chave (não um booleano "é exceção"):
+   * diz qual trava, e com que base. Migration 0036.
+   */
+  excecoesLegais: jsonb("excecoesLegais"),
+}, (t) => ({
+  uqEscalasCatalogoCodigoVigencia: uniqueIndex("uq_escalas_catalogo_codigo_vigencia").on(
+    t.codigo,
+    t.vigenciaInicio,
+  ),
+}));
+export type EscalaCatalogoRow = typeof escalasCatalogo.$inferSelect;
+export type InsertEscalaCatalogo = typeof escalasCatalogo.$inferInsert;
+
+// ─── Escala — Regras (travas e preferências, por rede/praça/loja) — migration 0032
+export const regrasEscalaTipoEnum = pgEnum("regras_escala_tipo", ["DURA", "MOLE", "DEPENDE_CCT"]);
+
+export const regrasEscala = pgTable("regras_escala", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId"),
+  uf: varchar("uf", { length: 2 }),
+  cct: varchar("cct", { length: 120 }),
+  chave: varchar("chave", { length: 64 }).notNull(),
+  valor: jsonb("valor").notNull(),
+  tipo: regrasEscalaTipoEnum("tipo").notNull(),
+  vigenciaInicio: date("vigenciaInicio"),
+  vigenciaFim: date("vigenciaFim"),
+  fonte: text("fonte").notNull(),
+}, (t) => ({
+  uqRegrasEscalaStoreChaveVigencia: uniqueIndex("uq_regras_escala_store_chave_vigencia").on(
+    t.storeId,
+    t.uf,
+    t.cct,
+    t.chave,
+    t.vigenciaInicio,
+  ),
+}));
+export type RegraEscalaRow = typeof regrasEscala.$inferSelect;
+export type InsertRegraEscala = typeof regrasEscala.$inferInsert;
+
+// ─── Escala — Confirmações de regra DEPENDE_CCT por loja — migration 0034 ───
+// R24 (revisão da Task 6, .superpowers/sdd/2026-11-19-escala-configuracao/):
+// "confirmar" uma regra DEPENDE_CCT (ex.: domingos de folga por mês) NÃO
+// pode gravar uma cópia da regra em `regras_escala` com escopo loja — por
+// precedência (Task 2, escala-regras.ts: loja > uf > rede), essa cópia
+// venceria PARA SEMPRE, inclusive depois que a regra de rede mudasse (a
+// EC 141/2026 tem duas viradas programadas: 16/12/2026 e 16/12/2027). Esta
+// tabela existe só para registrar QUE o gerente confirmou uma chave para a
+// loja dele — nunca o VALOR. Ela não guarda `valor`/`tipo`/`vigencia`
+// porque isso duplicaria o dado legal em dois lugares, e um dos dois
+// ficaria desatualizado em silêncio — o mesmo defeito que este plano
+// existe para evitar, só que num lugar novo.
+//
+// `resolverRegras` (Task 2) NUNCA lê esta tabela — nenhuma query de
+// resolução a consulta. Quando a regra de rede mudar, o resolvedor
+// devolve o valor novo automaticamente; esta tabela não entra na conta.
+export const confirmacoesRegraLoja = pgTable("confirmacoes_regra_loja", {
+  id: serial("id").primaryKey(),
+  storeId: integer("storeId").notNull(),
+  chave: varchar("chave", { length: 64 }).notNull(),
+  confirmadoEm: timestamp("confirmadoEm").defaultNow().notNull(),
+}, (t) => ({
+  uqConfirmacaoRegraLoja: uniqueIndex("uq_confirmacoes_regra_loja_store_chave").on(t.storeId, t.chave),
+}));
+export type ConfirmacaoRegraLojaRow = typeof confirmacoesRegraLoja.$inferSelect;
+export type InsertConfirmacaoRegraLoja = typeof confirmacoesRegraLoja.$inferInsert;

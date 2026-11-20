@@ -24,6 +24,9 @@ type StoreData = {
   googlePlaceId?: string | null;
   segmento?: string | null;
   faixaFaturamento?: string | null;
+  /** UF (sigla de 2 letras) — usada pelo módulo de Escala para resolver as
+   * regras legais de escopo estadual. Migration 0033 / R31. */
+  uf?: string | null;
 };
 type UserData = {
   id: number; openId: string; name: string; email: string | null;
@@ -42,6 +45,7 @@ function StoreModal({ store, onClose, onSaved }: { store?: StoreData | null; onC
     operationType: store?.operationType ?? "rua",
     googlePlaceId: (store as any)?.googlePlaceId ?? "",
     segmento: (store as any)?.segmento ?? "",
+    uf: (store as any)?.uf ?? "",
   });
   const createMutation = trpc.admin.createStore.useMutation();
   const updateMutation = trpc.admin.updateStore.useMutation();
@@ -75,8 +79,13 @@ function StoreModal({ store, onClose, onSaved }: { store?: StoreData | null; onC
     setLoading(true);
     try {
       const opType = form.operationType as "aeroporto" | "mall" | "rua" | "corporativo" | "universitario";
-      if (isEdit && store) { await updateMutation.mutateAsync({ id: store.id, ...form, operationType: opType }); toast.success("Loja atualizada."); }
-      else { await createMutation.mutateAsync({ ...form, operationType: opType }); toast.success("Loja criada!"); }
+      // R31: campo opcional — vazio vai como `undefined` (não mexe na
+      // coluna), preenchido vai SEMPRE em maiúsculas. O servidor valida de
+      // novo (2 letras); isto aqui é só para o campo em branco não virar
+      // erro de validação a cada salvamento de loja sem UF.
+      const uf = form.uf.trim() === "" ? undefined : form.uf.trim().toUpperCase();
+      if (isEdit && store) { await updateMutation.mutateAsync({ id: store.id, ...form, uf, operationType: opType }); toast.success("Loja atualizada."); }
+      else { await createMutation.mutateAsync({ ...form, uf, operationType: opType }); toast.success("Loja criada!"); }
       onSaved(); onClose();
     } catch (e: any) { toast.error(e.message ?? "Erro ao salvar."); }
     finally { setLoading(false); }
@@ -90,6 +99,18 @@ function StoreModal({ store, onClose, onSaved }: { store?: StoreData | null; onC
             <div className="col-span-2"><Label>Nome da loja *</Label><Input value={form.name} onChange={e => handleSlugify(e.target.value)} placeholder="Ex: Giraffas Shopping Center" /></div>
             <div><Label>Slug (URL) *</Label><Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} placeholder="giraffas-shopping" /></div>
             <div><Label>Localização</Label><Input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} placeholder="São Paulo - SP" /></div>
+            <div>
+              <Label>UF (estado)</Label>
+              <Input
+                value={form.uf}
+                maxLength={2}
+                onChange={e => setForm(f => ({ ...f, uf: e.target.value.toUpperCase() }))}
+                placeholder="SP"
+              />
+              <p style={{ fontSize: 11, color: "var(--stone)", marginTop: 4 }}>
+                Sigla de 2 letras. É o que faz o módulo de Escala aplicar as regras legais do estado/CCT da praça — loja sem UF só recebe as regras de rede.
+              </p>
+            </div>
             <div className="col-span-2"><Label>Nome do gerente</Label><Input value={form.managerName} onChange={e => setForm(f => ({ ...f, managerName: e.target.value }))} placeholder="Nome do gerente responsável" /></div>
             <div><Label>Receita orçada (R$)</Label><Input value={form.budgetRevenue} onChange={e => setForm(f => ({ ...f, budgetRevenue: e.target.value }))} type="number" /></div>
             <div><Label>CMV meta (%)</Label><Input value={form.budgetCmvPct} onChange={e => setForm(f => ({ ...f, budgetCmvPct: e.target.value }))} type="number" /></div>
